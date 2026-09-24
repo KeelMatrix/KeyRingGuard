@@ -28,9 +28,9 @@ Invoke-GateStep 'Changelog contract tests' { & (Join-Path $root 'tests' 'VerifyC
 Invoke-GateStep 'Release workflow contract' { & (Join-Path $root 'tests' 'VerifyReleaseWorkflowContract.ps1') }
 Invoke-GateStep 'Vulnerability audit contract tests' { & (Join-Path $root 'tests' 'VerifyVulnerabilityAuditContract.ps1') }
 Invoke-GateStep 'Formatting' { dotnet format KeelMatrix.KeyRingGuard.sln --no-restore --verify-no-changes }
+Invoke-GateStep 'Release script portability contract' { & (Join-Path $root 'tests' 'VerifyReleaseScriptPortability.ps1') }
 Invoke-GateStep 'Icon source contract' { & (Join-Path $PSScriptRoot 'Test-IconContract.ps1') -SourceOnly }
 Invoke-GateStep 'Pack' { dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg --output ./artifacts/packages }
-Invoke-GateStep 'Release script portability contract' { & (Join-Path $root 'tests' 'VerifyReleaseScriptPortability.ps1') }
 Invoke-GateStep 'Icon contract' { & (Join-Path $PSScriptRoot 'Test-IconContract.ps1') }
 Invoke-GateStep 'Package content inspection' { & (Join-Path $PSScriptRoot 'Inspect-Package.ps1') }
 Invoke-GateStep 'Dependency vulnerability audit' { & (Join-Path $PSScriptRoot 'Invoke-VulnerabilityAudit.ps1') }

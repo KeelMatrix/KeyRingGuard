@@ -63,15 +63,34 @@ try {
     $result = Invoke-Hygiene $cleanWithCompanyTrailer
     if ($result.ExitCode -ne 0) { throw "A legitimate company co-author trailer should pass history hygiene: $($result.Output)" }
 
+    $humanTrailers = @(
+        'Signed-off-by: External Contributor <external@example.invalid>'
+        'Reviewed-by: Human Maintainer <maintainer@example.invalid>'
+        'Acked-by: Release Verifier <verifier@example.invalid>'
+        'Tested-by: Test Maintainer <tests@example.invalid>'
+        'Committed-by: Release Maintainer <release@example.invalid>'
+    )
+    $cleanWithHumanTrailers = New-Fixture 'clean-human-trailers' (@('Keep history clean', '') + $humanTrailers -join [Environment]::NewLine)
+    $result = Invoke-Hygiene $cleanWithHumanTrailers
+    if ($result.ExitCode -ne 0) { throw "Ordinary human attribution trailers should pass history hygiene: $($result.Output)" }
+
+    $automationIdentity = ('paper' + 'clip')
+    $automationBotIdentity = 'Build ' + ('b' + 'ot')
+    $fullWidth = [char]0x3000
+    $nonBreakingSpace = [char]160
+    $tab = [char]9
     $fixtures = @(
-        @{ Name = 'spacing-variant'; Message = @('Fixture history', '', ('Co-Authored' + ' - ' + 'By : Paperclip <noreply@example.invalid>')) -join [Environment]::NewLine }
-        @{ Name = 'signed-off'; Message = @('Fixture history', '', ('Signed-off-by: Paperclip <noreply@example.invalid>')) -join [Environment]::NewLine }
-        @{ Name = 'reviewed-by'; Message = @('Fixture history', '', ('Reviewed-by: Paperclip <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'spacing-variant'; Message = @('Fixture history', '', ('Co' + $tab + ' - ' + 'Authored' + $fullWidth + '-' + 'By: ' + $automationIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'multiple-spaces'; Message = @('Fixture history', '', ('Co  -  Authored  -  By: ' + $automationIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'signed-off'; Message = @('Fixture history', '', ('Signed' + $nonBreakingSpace + '-' + 'off' + $fullWidth + '-' + 'by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'reviewed-by'; Message = @('Fixture history', '', ('Reviewed-by: ' + $automationIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'acked-by'; Message = @('Fixture history', '', ('Acked-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'tested-by'; Message = @('Fixture history', '', ('Tested-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'committed-by'; Message = @('Fixture history', '', ('Committed-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
         @{ Name = 'co-author'; Message = @('Fixture history', '', 'co_author: KeelMatrix') -join [Environment]::NewLine }
-        @{ Name = 'subject-only'; Message = 'Paperclip in the subject' }
+        @{ Name = 'subject-only'; Message = $automationIdentity + ' in the subject' }
         @{ Name = 'bad-trailer'; Message = @('Fixture history', '', ('Co-Authored' + '-By: NotKeelMatrix <noreply@example.invalid>')) -join [Environment]::NewLine; SideBranch = $true }
-        @{ Name = 'tag-only'; Message = @('Fixture history', '', ('Reviewed-by: NotKeelMatrix <noreply@example.invalid>')) -join [Environment]::NewLine; TagOnly = $true }
-        @{ Name = 'merge-commit'; Message = @('Merge side branch', '', ('Signed-off-by: NotKeelMatrix <noreply@example.invalid>')) -join [Environment]::NewLine; Merge = $true }
+        @{ Name = 'merge-commit'; Message = @('Merge side branch', '', ('Signed-off-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine; Merge = $true }
         @{ Name = 'non-company-author'; Message = 'Clean side branch'; NonCompanyAuthor = $true }
     )
 

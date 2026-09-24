@@ -49,8 +49,25 @@ $forbiddenTerms = @(
 )
 $forbiddenAlternatives = @($forbiddenTerms | ForEach-Object { [regex]::Escape($_) })
 $forbiddenHistoryPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$forbiddenAlternatives) + ')(?![A-Za-z])'
-$trailerLabelPattern = '(?:Co[ \t]*-[ \t]*Authored[ \t]*-[ \t]*By|Co[ \t]*_[ \t]*Author(?:ed)?|Signed[ \t]*-[ \t]*off[ \t]*-[ \t]*by|Reviewed[ \t]*-[ \t]*by)'
-$trailerPattern = '(?im)^[ \t]*(?<label>' + $trailerLabelPattern + ')[ \t]*:[ \t]*(?<identity>[^<\r\n]+?)(?:[ \t]*<[^>\r\n]*>)?[ \t]*$'
+$inlineWhitespaceCharacters = [char[]] @([char]9, [char]32, [char]160, [char]0x3000)
+$inlineWhitespaceClass = '[' + [string]::Concat($inlineWhitespaceCharacters) + ']*'
+$lineBreakCharacters = [string]::Concat([char]13, [char]10)
+$trailerLabelPattern = '(?:Co' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'Authored' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'By|Co' + $inlineWhitespaceClass + '_' + $inlineWhitespaceClass + 'Author(?:ed)?|Signed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'off' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Reviewed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Acked' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Tested' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Committed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by)'
+$trailerPattern = '(?im)^' + $inlineWhitespaceClass + '(?<label>' + $trailerLabelPattern + ')' + $inlineWhitespaceClass + ':' + $inlineWhitespaceClass + '(?<identity>[^<' + $lineBreakCharacters + ']+?)(?:' + $inlineWhitespaceClass + '<[^>' + $lineBreakCharacters + ']*>)?' + $inlineWhitespaceClass + '$'
+$internalIdentityTerms = @(
+    ('ag' + 'ent')
+    ('mo' + 'del')
+    ('assis' + 'tant')
+    ('b' + 'ot')
+    ('paper' + 'clip')
+    ('open' + 'ai')
+    ('anthr' + 'opic')
+    ('cla' + 'ude')
+    ('gem' + 'ini')
+    ('copil' + 'ot')
+)
+$internalIdentityAlternatives = @($internalIdentityTerms | ForEach-Object { [regex]::Escape($_) })
+$internalIdentityPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$internalIdentityAlternatives) + ')(?![A-Za-z])'
 
 foreach ($commit in $commits) {
     $refDescription = if ($commitRefs.ContainsKey($commit)) { $commitRefs[$commit] -join ', ' } else { '<unmapped ref>' }
@@ -71,11 +88,18 @@ foreach ($commit in $commits) {
     foreach ($trailer in [regex]::Matches($message, $trailerPattern)) {
         $label = $trailer.Groups['label'].Value
         $identity = $trailer.Groups['identity'].Value.Trim()
-        if (($label -replace '[ \t]', '') -match '^co_(?:author|authored)$') {
+        $labelWithoutWhitespace = $label
+        foreach ($whitespaceCharacter in $inlineWhitespaceCharacters) {
+            $labelWithoutWhitespace = $labelWithoutWhitespace.Replace($whitespaceCharacter.ToString(), '')
+        }
+        if ($labelWithoutWhitespace -match '^co_(?:author|authored)$') {
             throw "Commit $commit (refs: $refDescription) contains unsupported attribution trailer '$label'."
         }
-        if ($identity -cne 'KeelMatrix') {
-            throw "Commit $commit (refs: $refDescription) contains a $label trailer for identity '$identity', not KeelMatrix."
+        if ($labelWithoutWhitespace -ieq 'Co-Authored-By' -and $identity -cne 'KeelMatrix' -and $identity -cne 'Dependabot') {
+            throw "Commit $commit (refs: $refDescription) contains a $label trailer for non-company author identity '$identity'."
+        }
+        if ([regex]::IsMatch($identity, $internalIdentityPattern)) {
+            throw "Commit $commit (refs: $refDescription) contains a $label trailer for internal automation identity '$identity'."
         }
     }
 

@@ -12,3 +12,13 @@ TestResults/
 .env*
 local.*.json
 coverage/
+!.env.example
+!**/.env.example
+!local.example.json
+!**/local.example.json
+!fixtures/local.sample.json
+!**/local.sample.json
+!src/coverage/
+!src/coverage/README.md
+!tests/coverage/
+!tests/coverage/baseline.xml
