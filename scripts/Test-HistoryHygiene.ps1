@@ -16,7 +16,7 @@ foreach ($relativePath in $tracked) {
     $path = Join-Path $root $relativePath
     if (Test-Path -LiteralPath $path -PathType Leaf) {
         $content = Get-Content -Raw -LiteralPath $path
-        if ($content -match '(?i)\b[A-Z]{2,5}-\d+\b') {
+        if ($content -match '(?-i)\b[A-Z]{2,5}-\d+\b') {
             throw "Issue identifiers found in $relativePath."
         }
     }

@@ -25,7 +25,7 @@ try {
     $namespace.AddNamespace('n', 'http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd')
     $metadata = $nuspec.SelectSingleNode('/n:package/n:metadata', $namespace)
     if ($metadata.id -ne 'KeelMatrix.KeyRingGuard' -or $metadata.version -ne '0.1.0') { throw 'Package identity or version is incorrect.' }
-    if ($metadata.readme -ne 'README.md' -or $metadata.license.type -ne 'file' -or $metadata.license.file -ne 'LICENSE') { throw 'README or license metadata is incorrect.' }
+    if ($metadata.readme -ne 'README.md' -or $metadata.license.type -ne 'file' -or $metadata.license.InnerText -ne 'LICENSE') { throw 'README or license metadata is incorrect.' }
     if (-not $metadata.dependencies.group.dependency) { throw 'The package has no declared Data Protection dependency.' }
     $dependencies = @($metadata.dependencies.group.dependency | ForEach-Object id)
     if ($dependencies -contains 'KeelMatrix.Telemetry' -or $dependencies -match 'Redis|Azure|AWS|StackExchange|SqlClient') { throw "Unexpected provider or telemetry dependency: $($dependencies -join ', ')." }
