@@ -42,6 +42,18 @@ try {
 
 $project = (Resolve-Path (Join-Path $PSScriptRoot '..\src\KeelMatrix.KeyRingGuard\KeelMatrix.KeyRingGuard.csproj')).Path
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$symbolPackage = [System.IO.Path]::ChangeExtension($package, '.snupkg')
+if (-not (Test-Path -LiteralPath $symbolPackage)) { throw "Symbol package is missing: $symbolPackage" }
+$symbolArchive = [System.IO.Compression.ZipFile]::OpenRead($symbolPackage)
+try {
+    $symbolEntries = @($symbolArchive.Entries | ForEach-Object FullName | Sort-Object)
+    $expectedSymbols = @('_rels/.rels', 'KeelMatrix.KeyRingGuard.nuspec', 'lib/net8.0/KeelMatrix.KeyRingGuard.pdb', '[Content_Types].xml', 'package/services/metadata/core-properties/nuget.psmdcp' | Sort-Object)
+    if ((Compare-Object -ReferenceObject $expectedSymbols -DifferenceObject $symbolEntries)) { throw 'Symbol package payload mismatch.' }
+    Write-Output "Symbol package inspection: PASS ($symbolPackage)"
+} finally {
+    $symbolArchive.Dispose()
+}
+
 $projectText = Get-Content -Raw -LiteralPath $project
 Write-Output 'Icon pack configuration:'
 $projectText -split "`r?`n" | Where-Object { $_ -match 'PackageIcon|icon\.png' } | ForEach-Object { Write-Output $_.Trim() }
