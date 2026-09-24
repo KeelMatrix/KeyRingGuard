@@ -9,3 +9,6 @@ TestResults/
 *.nupkg
 *.snupkg
 *.log
+.env*
+local.*.json
+coverage/
