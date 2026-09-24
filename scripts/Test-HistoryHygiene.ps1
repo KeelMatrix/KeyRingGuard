@@ -49,11 +49,11 @@ $forbiddenTerms = @(
 )
 $forbiddenAlternatives = @($forbiddenTerms | ForEach-Object { [regex]::Escape($_) })
 $forbiddenHistoryPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$forbiddenAlternatives) + ')(?![A-Za-z])'
-$inlineWhitespaceCharacters = [char[]] @([char]9, [char]32, [char]160, [char]0x3000)
+$inlineWhitespaceCharacters = [char[]] @([char]9, [char]11, [char]12, [char]32, [char]160, [char]0x3000)
 $inlineWhitespaceClass = '[' + [string]::Concat($inlineWhitespaceCharacters) + ']*'
 $lineBreakCharacters = [string]::Concat([char]13, [char]10)
 $trailerLabelPattern = '(?:Co' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'Authored' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'By|Co' + $inlineWhitespaceClass + '_' + $inlineWhitespaceClass + 'Author(?:ed)?|Signed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'off' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Reviewed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Acked' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Tested' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Committed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by)'
-$trailerPattern = '(?im)^' + $inlineWhitespaceClass + '(?<label>' + $trailerLabelPattern + ')' + $inlineWhitespaceClass + ':' + $inlineWhitespaceClass + '(?<identity>[^<' + $lineBreakCharacters + ']+?)(?:' + $inlineWhitespaceClass + '<[^>' + $lineBreakCharacters + ']*>)?' + $inlineWhitespaceClass + '$'
+$trailerPattern = '(?im)^' + $inlineWhitespaceClass + '(?<label>' + $trailerLabelPattern + ')' + $inlineWhitespaceClass + ':' + $inlineWhitespaceClass + '(?<identity>[^<' + $lineBreakCharacters + ']+?)(?:' + $inlineWhitespaceClass + '<(?<email>[^>' + $lineBreakCharacters + ']*)>)?' + $inlineWhitespaceClass + '$'
 $internalIdentityTerms = @(
     ('ag' + 'ent')
     ('mo' + 'del')
@@ -65,6 +65,37 @@ $internalIdentityTerms = @(
     ('cla' + 'ude')
     ('gem' + 'ini')
     ('copil' + 'ot')
+    'action'
+    'actions'
+    'ci'
+    'cd'
+    'build'
+    'builder'
+    'pipeline'
+    'pipelines'
+    'runner'
+    'robot'
+    'bot'
+    'automation'
+    'automated'
+    'service'
+    'account'
+    'noreply'
+    'no-reply'
+    'no_reply'
+    'github actions'
+    'buildkite'
+    'jenkins'
+    'azure pipelines'
+    'teamcity'
+    'circleci'
+    'gitlab ci'
+    'travis'
+    'appveyor'
+    'drone'
+    'woodpecker'
+    'argo'
+    'tekton'
 )
 $internalIdentityAlternatives = @($internalIdentityTerms | ForEach-Object { [regex]::Escape($_) })
 $internalIdentityPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$internalIdentityAlternatives) + ')(?![A-Za-z])'
@@ -88,6 +119,7 @@ foreach ($commit in $commits) {
     foreach ($trailer in [regex]::Matches($message, $trailerPattern)) {
         $label = $trailer.Groups['label'].Value
         $identity = $trailer.Groups['identity'].Value.Trim()
+        $email = $trailer.Groups['email'].Value.Trim()
         $labelWithoutWhitespace = $label
         foreach ($whitespaceCharacter in $inlineWhitespaceCharacters) {
             $labelWithoutWhitespace = $labelWithoutWhitespace.Replace($whitespaceCharacter.ToString(), '')
@@ -98,8 +130,11 @@ foreach ($commit in $commits) {
         if ($labelWithoutWhitespace -ieq 'Co-Authored-By' -and $identity -cne 'KeelMatrix' -and $identity -cne 'Dependabot') {
             throw "Commit $commit (refs: $refDescription) contains a $label trailer for non-company author identity '$identity'."
         }
-        if ([regex]::IsMatch($identity, $internalIdentityPattern)) {
-            throw "Commit $commit (refs: $refDescription) contains a $label trailer for internal automation identity '$identity'."
+        $isAllowedCompanyCoAuthor = $labelWithoutWhitespace -ieq 'Co-Authored-By' -and $identity -in @('KeelMatrix', 'Dependabot')
+        if (-not $isAllowedCompanyCoAuthor -and
+            ([regex]::IsMatch($identity, $internalIdentityPattern) -or [regex]::IsMatch($email, $internalIdentityPattern))) {
+            $reportedIdentity = if ($email) { "$identity <$email>" } else { $identity }
+            throw "Commit $commit (refs: $refDescription) contains a $label trailer for internal automation identity '$reportedIdentity'."
         }
     }
 
@@ -119,4 +154,4 @@ foreach ($relativePath in $tracked) {
     }
 }
 
-Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable refs, subjects and bodies; split, encoded and obfuscated forms are not detected.)'
+Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable commit refs, subjects and bodies; form feed and vertical tab are accepted as label separators; annotated tag messages and Git notes are not scanned; split, encoded and obfuscated forms are not detected.)'

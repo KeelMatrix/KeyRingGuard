@@ -58,17 +58,22 @@ try {
     $result = Invoke-Hygiene $clean
     if ($result.ExitCode -ne 0) { throw "A clean history should pass history hygiene: $($result.Output)" }
 
-    $legitimateTrailer = ('Co-Authored' + '-By: KeelMatrix <noreply@keelmatrix.dev>')
-    $cleanWithCompanyTrailer = New-Fixture 'clean-company-trailer' (@('Keep history clean', '', $legitimateTrailer) -join [Environment]::NewLine)
+    $legitimateTrailers = @(
+        'Co-Authored' + '-By: KeelMatrix'
+        'Co-Authored' + '-By: KeelMatrix <noreply@keelmatrix.dev>'
+    )
+    $cleanWithCompanyTrailer = New-Fixture 'clean-company-trailer' (@('Keep history clean', '') + $legitimateTrailers -join [Environment]::NewLine)
     $result = Invoke-Hygiene $cleanWithCompanyTrailer
     if ($result.ExitCode -ne 0) { throw "A legitimate company co-author trailer should pass history hygiene: $($result.Output)" }
 
     $humanTrailers = @(
-        'Signed-off-by: External Contributor <external@example.invalid>'
-        'Reviewed-by: Human Maintainer <maintainer@example.invalid>'
+        'Signed-off-by: External Contributor'
+        'Reviewed-by: Human Maintainer'
+        'Signed-off-by: Jane Doe <jane@example.org>'
         'Acked-by: Release Verifier <verifier@example.invalid>'
         'Tested-by: Test Maintainer <tests@example.invalid>'
         'Committed-by: Release Maintainer <release@example.invalid>'
+        'Signed-off-by: Robotics <robotics@example.org>'
     )
     $cleanWithHumanTrailers = New-Fixture 'clean-human-trailers' (@('Keep history clean', '') + $humanTrailers -join [Environment]::NewLine)
     $result = Invoke-Hygiene $cleanWithHumanTrailers
@@ -79,6 +84,16 @@ try {
     $fullWidth = [char]0x3000
     $nonBreakingSpace = [char]160
     $tab = [char]9
+    $formFeed = [char]12
+    $verticalTab = [char]11
+    $separatorTrailers = @(
+        ('Signed' + $formFeed + '-' + $formFeed + 'off' + $formFeed + '-' + $formFeed + 'by: External Contributor')
+        ('Reviewed' + $verticalTab + '-' + $verticalTab + 'by: Human Maintainer')
+    )
+    $separatorFixture = New-Fixture 'additional-separators' (@('Fixture history', '') + $separatorTrailers -join [Environment]::NewLine)
+    $result = Invoke-Hygiene $separatorFixture
+    if ($result.ExitCode -ne 0) { throw "Form feed and vertical tab label separators should be recognized: $($result.Output)" }
+
     $fixtures = @(
         @{ Name = 'spacing-variant'; Message = @('Fixture history', '', ('Co' + $tab + ' - ' + 'Authored' + $fullWidth + '-' + 'By: ' + $automationIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
         @{ Name = 'multiple-spaces'; Message = @('Fixture history', '', ('Co  -  Authored  -  By: ' + $automationIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
@@ -87,6 +102,22 @@ try {
         @{ Name = 'acked-by'; Message = @('Fixture history', '', ('Acked-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
         @{ Name = 'tested-by'; Message = @('Fixture history', '', ('Tested-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
         @{ Name = 'committed-by'; Message = @('Fixture history', '', ('Committed-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
+        @{ Name = 'github-actions'; Message = @('Fixture history', '', 'Signed-off-by: GitHub Actions') -join [Environment]::NewLine }
+        @{ Name = 'buildkite-ci'; Message = @('Fixture history', '', 'Reviewed-by: Buildkite CI') -join [Environment]::NewLine }
+        @{ Name = 'jenkins'; Message = @('Fixture history', '', 'Acked-by: Jenkins') -join [Environment]::NewLine }
+        @{ Name = 'azure-pipelines'; Message = @('Fixture history', '', 'Tested-by: Azure Pipelines') -join [Environment]::NewLine }
+        @{ Name = 'ci-automation'; Message = @('Fixture history', '', 'Committed-by: CI Automation') -join [Environment]::NewLine }
+        @{ Name = 'teamcity'; Message = @('Fixture history', '', 'Signed-off-by: TeamCity') -join [Environment]::NewLine }
+        @{ Name = 'circleci'; Message = @('Fixture history', '', 'Reviewed-by: CircleCI') -join [Environment]::NewLine }
+        @{ Name = 'gitlab-ci'; Message = @('Fixture history', '', 'Acked-by: GitLab CI') -join [Environment]::NewLine }
+        @{ Name = 'travis'; Message = @('Fixture history', '', 'Tested-by: Travis') -join [Environment]::NewLine }
+        @{ Name = 'appveyor'; Message = @('Fixture history', '', 'Committed-by: AppVeyor') -join [Environment]::NewLine }
+        @{ Name = 'drone'; Message = @('Fixture history', '', 'Signed-off-by: Drone') -join [Environment]::NewLine }
+        @{ Name = 'woodpecker'; Message = @('Fixture history', '', 'Reviewed-by: Woodpecker') -join [Environment]::NewLine }
+        @{ Name = 'argo'; Message = @('Fixture history', '', 'Acked-by: Argo') -join [Environment]::NewLine }
+        @{ Name = 'tekton'; Message = @('Fixture history', '', 'Tested-by: Tekton') -join [Environment]::NewLine }
+        @{ Name = 'address-only-noreply'; Message = @('Fixture history', '', 'Signed-off-by: Human Maintainer <noreply@example.invalid>') -join [Environment]::NewLine }
+        @{ Name = 'address-only-vendor'; Message = @('Fixture history', '', 'Signed-off-by: Human Maintainer <openai@example.invalid>') -join [Environment]::NewLine }
         @{ Name = 'co-author'; Message = @('Fixture history', '', 'co_author: KeelMatrix') -join [Environment]::NewLine }
         @{ Name = 'subject-only'; Message = $automationIdentity + ' in the subject' }
         @{ Name = 'bad-trailer'; Message = @('Fixture history', '', ('Co-Authored' + '-By: NotKeelMatrix <noreply@example.invalid>')) -join [Environment]::NewLine; SideBranch = $true }
@@ -115,7 +146,7 @@ try {
         if ($result.ExitCode -eq 0) { throw "$($fixtureSpec.Name) fixture must fail history hygiene." }
     }
 
-    Write-Output 'History hygiene contract: PASS (clean, company-attributed, trailer, subject, side-branch, tag-only and merge fixtures behave as required).'
+    Write-Output 'History hygiene contract: PASS (clean, company-attributed, human, CI, address-only, separator, subject, side-branch, tag-only and merge fixtures behave as required).'
     exit 0
 }
 finally {

@@ -116,9 +116,12 @@ while ($scriptNames.Count -gt 0) {
         if ($null -eq $resolved) { continue }
 
         $resolved = [IO.Path]::GetFullPath($resolved)
-        $pathType = if ($parameter.Name.VariablePath.UserPath -ceq 'RepositoryRoot') { 'Container' } else { 'Leaf' }
-        if (-not (Test-Path -LiteralPath $resolved -PathType $pathType)) {
-            Fail "$scriptName parameter '$($parameter.Name.VariablePath.UserPath)' does not resolve to a $pathType on this host: $resolved"
+        # Every default must have a repository-derived Join-Path shape. Only a
+        # RepositoryRoot container is required to exist; output artifact leaf
+        # defaults are intentionally allowed to be absent before the gate packs.
+        if ($parameter.Name.VariablePath.UserPath -ceq 'RepositoryRoot' -and
+            -not (Test-Path -LiteralPath $resolved -PathType Container)) {
+            Fail "$scriptName parameter '$($parameter.Name.VariablePath.UserPath)' does not resolve to a Container on this host: $resolved"
         }
     }
 
@@ -130,4 +133,4 @@ while ($scriptNames.Count -gt 0) {
     }
 }
 
-Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; default paths resolve on this host; literal separator allowlist: empty). This proves only that PowerShell source text contains no literal Windows separator. It does not prove release-job portability for .json, .props, NuGet.config, evaluated MSBuild project/build inputs, or runtime-constructed separators. The evaluated-input residual includes src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj:36-38 and Directory.Build.targets:6-10 as visible through dotnet msbuild with /pp:preprocessed.xml."
+Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; defaults use repository-derived path shape, RepositoryRoot containers resolve on this host, and produced artifact leaf defaults need not exist; literal separator allowlist: empty). This proves only that PowerShell source text contains no literal Windows separator. It does not prove release-job portability for .json, .props, NuGet.config, evaluated MSBuild project/build inputs, or runtime-constructed separators. The evaluated-input residual includes src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj:36-38 and Directory.Build.targets:6-10 as visible through dotnet msbuild with /pp:preprocessed.xml."
