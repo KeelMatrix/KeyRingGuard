@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.KeyRingGuard</AssemblyName>
+    <RootNamespace>KeelMatrix.KeyRingGuard</RootNamespace>
+    <PackageId>KeelMatrix.KeyRingGuard</PackageId>
+    <IsPackable>true</IsPackable>
+    <Authors>KeelMatrix</Authors>
+    <Copyright>Copyright (c) 2026 KeelMatrix</Copyright>
+    <Description>Prove ASP.NET Core Data Protection key continuity, sharing, rotation, and isolation before deployment.</Description>
+    <PackageTags>aspnetcore;data-protection;key-ring;testing;security;docker;authentication;integration-testing</PackageTags>
+    <RepositoryUrl>https://github.com/KeelMatrix/KeyRingGuard</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/KeelMatrix/KeyRingGuard#readme</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageIcon Condition="Exists('$(MSBuildProjectDirectory)\..\..\icon.png')">icon.png</PackageIcon>
+    <PackageReleaseNotes>Provider-neutral continuity and isolation verification for ASP.NET Core Data Protection.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" />
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+    <None Update="README.md" Pack="true" PackagePath="README.md" Visible="false" />
+    <None Include="$(MSBuildProjectDirectory)\..\..\LICENSE" Pack="true" PackagePath="" Visible="false" />
+    <None Include="$(MSBuildProjectDirectory)\..\..\icon.png"
+          Condition="Exists('$(MSBuildProjectDirectory)\..\..\icon.png')"
+          Pack="true"
+          PackagePath="icon.png"
+          Visible="false" />
+  </ItemGroup>
+</Project>

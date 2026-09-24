@@ -1,0 +1,20 @@
+<Project>
+  <Target Name="ValidateKeyRingGuardPackageInputs"
+          BeforeTargets="Pack"
+          Condition="'$(IsPackable)' == 'true'">
+    <ItemGroup>
+      <_ForbiddenPackageInput Include="$(MSBuildProjectDirectory)\**\.env*" />
+      <_ForbiddenPackageInput Include="$(MSBuildProjectDirectory)\**\*local.telemetry*" />
+      <_ForbiddenPackageInput Include="$(MSBuildProjectDirectory)\**\*.pfx" />
+      <_ForbiddenPackageInput Include="$(MSBuildProjectDirectory)\**\*.p12" />
+      <_ForbiddenPackageInput Include="$(MSBuildProjectDirectory)\**\*.pem" />
+    </ItemGroup>
+    <Error Condition="'@(_ForbiddenPackageInput)' != ''"
+           Text="Package inputs include prohibited sensitive files: @(_ForbiddenPackageInput->'%(FullPath)', ', ')." />
+  </Target>
+
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS1591;CA1861</NoWarn>
+  </PropertyGroup>
+</Project>
