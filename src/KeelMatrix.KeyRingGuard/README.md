@@ -24,4 +24,6 @@ Assert.True(result.Succeeded, result.Message);
 
 KeyRingGuard is offline and has no telemetry dependency. Use a temporary or dedicated test store because Data Protection may auto-generate a key during verification.
 
+The configured timeout applies to each provider, protector, protect, unprotect, and rotation operation. Synchronous callbacks run on a worker so the verifier can return a bounded timeout result, but an already-running synchronous callback cannot be forcibly interrupted and may finish in the background. Cancellation is cooperative for asynchronous callbacks.
+
 Read the [scenario guide](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/usage.md) and [verification boundary](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/what-it-proves.md).

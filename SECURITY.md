@@ -1,5 +1,28 @@
-# Security policy
+# Security Policy
 
-Please report security issues privately to the repository maintainers rather than opening a public issue with exploit details or secret material.
+## Reporting a Vulnerability
 
-KeyRingGuard does not read or emit Data Protection key XML and never deletes or revokes keys. Run checks against temporary or dedicated stores. A caller-supplied provider factory remains responsible for its backing store, credentials, transport security, and access controls.
+Report suspected vulnerabilities privately before any public disclosure:
+
+1. Email **keelmatrix@gmail.com**.
+2. Open a private GitHub security advisory in this repository.
+
+Do not create a public issue or otherwise publicly disclose sensitive vulnerability details, exploit steps, credentials, customer data, key material, or private reports.
+
+Please include, when safe:
+
+- affected KeyRingGuard version, runtime, operating system, and Data Protection/provider combination;
+- safe reproduction steps or a minimized proof of concept;
+- security impact and the affected trust boundary;
+- whether the issue involves diagnostics, package contents, timeout behavior, or provider integration;
+- suggested mitigation or fix, if known.
+
+Reports are investigated best-effort. Ordinary bugs should use the normal project contribution path; Code of Conduct concerns should use the community reporting route.
+
+## Supported Versions
+
+Security fixes are prioritized for the latest released package line. Older versions may receive fixes on a case-by-case basis.
+
+## Product Security Notes
+
+KeyRingGuard generates only synthetic in-memory canaries. It does not read or emit Data Protection key XML, and it never deletes or revokes keys. Run checks against temporary or dedicated stores. A caller-supplied provider factory remains responsible for its backing store, credentials, transport security, and access controls.

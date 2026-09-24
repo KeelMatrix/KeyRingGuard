@@ -79,7 +79,7 @@ If no key-manager factory is supplied, the result is `RotationUnavailable`. KeyR
 
 ## Provider-factory patterns
 
-The factory may be synchronous or asynchronous. The verifier passes a cancellation token to every operation and applies the configured per-operation timeout. Use the asynchronous constructor for network-backed provider creation and honor the token in the provider setup path.
+The factory may be synchronous or asynchronous. The verifier passes a cancellation token to provider and key-manager factories and applies the configured per-operation timeout to provider creation, protector creation, protect, unprotect, and rotation. Synchronous callbacks run on a worker so an uncooperative callback cannot hold the verifier past its bound, but .NET cannot forcibly interrupt a synchronous callback that is already running; it may finish in the background. Cancellation is cooperative for asynchronous callbacks. Use the asynchronous constructor for network-backed provider creation and honor the token in the provider setup path.
 
 Provider exceptions are categorized without copying exception text into the result. Results distinguish provider creation, protect, unprotect, unexpected cross-unprotect, timeout, cancellation, and rotation failures.
 

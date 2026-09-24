@@ -19,7 +19,7 @@ public static class KeyRingVerifier
     /// <param name="scenario">The immutable scenario description to execute.</param>
     /// <param name="providerFactory">The primary provider factory.</param>
     /// <param name="secondaryProviderFactory">The second factory required by replica and application-isolation scenarios.</param>
-    /// <param name="cancellationToken">Cancels provider creation and verification.</param>
+    /// <param name="cancellationToken">Cancels provider creation and verification operations.</param>
     /// <returns>A structured result that never includes key material, canaries, or raw provider exceptions.</returns>
     public static async Task<KeyRingVerificationResult> VerifyAsync(
         KeyRingScenario scenario,
@@ -75,20 +75,26 @@ public static class KeyRingVerifier
             return first.Failure;
         }
 
-        var protector = CreateProtector(first.Provider!, SharedPurpose);
-        if (protector is null)
+        var protectorResult = await CreateProtectorAsync(
+            scenario,
+            first.Provider!,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (protectorResult.Failure is not null)
         {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: the configured provider could not create a protector.");
+            return protectorResult.Failure;
         }
 
-        byte[] protectedPayload;
-        try
+        var protectedResult = await ProtectAsync(
+            scenario,
+            protectorResult.Value!,
+            canary,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (protectedResult.Failure is not null)
         {
-            protectedPayload = protector.Protect(canary);
-        }
-        catch (Exception)
-        {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: the configured provider could not protect the synthetic canary.");
+            return protectedResult.Failure;
         }
 
         var second = await CreateProviderAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
@@ -97,7 +103,14 @@ public static class KeyRingVerifier
             return second.Failure;
         }
 
-        return UnprotectAndCompare(scenario, second.Provider!, protectedPayload, canary, SharedPurpose);
+        return await UnprotectAndCompareAsync(
+            scenario,
+            second.Provider!,
+            protectedResult.Value!,
+            canary,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<KeyRingVerificationResult> VerifyReplicaSharingAsync(
@@ -124,32 +137,71 @@ public static class KeyRingVerifier
             return second.Failure;
         }
 
-        var firstProtector = CreateProtector(first.Provider!, SharedPurpose);
-        var secondProtector = CreateProtector(second.Provider!, SharedPurpose);
-        if (firstProtector is null || secondProtector is null)
+        var firstProtectorResult = await CreateProtectorAsync(
+            scenario,
+            first.Provider!,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (firstProtectorResult.Failure is not null)
         {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: a configured provider could not create a protector.");
+            return firstProtectorResult.Failure;
         }
 
-        byte[] firstPayload;
-        byte[] secondPayload;
-        try
+        var secondProtectorResult = await CreateProtectorAsync(
+            scenario,
+            second.Provider!,
+            SharedPurpose,
+            secondaryProviderFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (secondProtectorResult.Failure is not null)
         {
-            firstPayload = firstProtector.Protect(canary);
-            secondPayload = secondProtector.Protect(canary);
-        }
-        catch (Exception)
-        {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: a configured provider could not protect the synthetic canary.");
+            return secondProtectorResult.Failure;
         }
 
-        var firstResult = UnprotectAndCompare(scenario, second.Provider!, firstPayload, canary, SharedPurpose);
+        var firstProtectedResult = await ProtectAsync(
+            scenario,
+            firstProtectorResult.Value!,
+            canary,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (firstProtectedResult.Failure is not null)
+        {
+            return firstProtectedResult.Failure;
+        }
+
+        var secondProtectedResult = await ProtectAsync(
+            scenario,
+            secondProtectorResult.Value!,
+            canary,
+            secondaryProviderFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (secondProtectedResult.Failure is not null)
+        {
+            return secondProtectedResult.Failure;
+        }
+
+        var firstResult = await UnprotectAndCompareAsync(
+            scenario,
+            second.Provider!,
+            firstProtectedResult.Value!,
+            canary,
+            SharedPurpose,
+            secondaryProviderFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
         if (!firstResult.Succeeded)
         {
             return firstResult;
         }
 
-        return UnprotectAndCompare(scenario, first.Provider!, secondPayload, canary, SharedPurpose);
+        return await UnprotectAndCompareAsync(
+            scenario,
+            first.Provider!,
+            secondProtectedResult.Value!,
+            canary,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<KeyRingVerificationResult> VerifyIsolationAsync(
@@ -178,32 +230,69 @@ public static class KeyRingVerifier
             return second.Failure;
         }
 
-        var firstProtector = CreateProtector(first.Provider!, firstPurpose);
-        var secondProtector = CreateProtector(second.Provider!, secondPurpose);
-        if (firstProtector is null || secondProtector is null)
+        var firstProtectorResult = await CreateProtectorAsync(
+            scenario,
+            first.Provider!,
+            firstPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (firstProtectorResult.Failure is not null)
         {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: a configured provider could not create a protector.");
+            return firstProtectorResult.Failure;
         }
 
-        byte[] firstPayload;
-        byte[] secondPayload;
-        try
+        var secondProtectorResult = await CreateProtectorAsync(
+            scenario,
+            second.Provider!,
+            secondPurpose,
+            secondaryProviderFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (secondProtectorResult.Failure is not null)
         {
-            firstPayload = firstProtector.Protect(canary);
-            secondPayload = secondProtector.Protect(canary);
-        }
-        catch (Exception)
-        {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: a configured provider could not protect the synthetic canary.");
+            return secondProtectorResult.Failure;
         }
 
-        var firstCrossResult = ExpectUnprotectFailure(scenario, second.Provider!, firstPayload, secondPurpose);
+        var firstProtectedResult = await ProtectAsync(
+            scenario,
+            firstProtectorResult.Value!,
+            canary,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (firstProtectedResult.Failure is not null)
+        {
+            return firstProtectedResult.Failure;
+        }
+
+        var secondProtectedResult = await ProtectAsync(
+            scenario,
+            secondProtectorResult.Value!,
+            canary,
+            secondaryProviderFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (secondProtectedResult.Failure is not null)
+        {
+            return secondProtectedResult.Failure;
+        }
+
+        var firstCrossResult = await ExpectUnprotectFailureAsync(
+            scenario,
+            second.Provider!,
+            firstProtectedResult.Value!,
+            secondPurpose,
+            secondaryProviderFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
         if (!firstCrossResult.Succeeded)
         {
             return firstCrossResult;
         }
 
-        return ExpectUnprotectFailure(scenario, first.Provider!, secondPayload, firstPurpose);
+        return await ExpectUnprotectFailureAsync(
+            scenario,
+            first.Provider!,
+            secondProtectedResult.Value!,
+            firstPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<KeyRingVerificationResult> VerifyRotationContinuityAsync(
@@ -223,20 +312,26 @@ public static class KeyRingVerifier
             return first.Failure;
         }
 
-        var protector = CreateProtector(first.Provider!, SharedPurpose);
-        if (protector is null)
+        var protectorResult = await CreateProtectorAsync(
+            scenario,
+            first.Provider!,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (protectorResult.Failure is not null)
         {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: the configured provider could not create a protector.");
+            return protectorResult.Failure;
         }
 
-        byte[] protectedPayload;
-        try
+        var protectedResult = await ProtectAsync(
+            scenario,
+            protectorResult.Value!,
+            canary,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (protectedResult.Failure is not null)
         {
-            protectedPayload = protector.Protect(canary);
-        }
-        catch (Exception)
-        {
-            return Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: the configured provider could not protect the synthetic canary.");
+            return protectedResult.Failure;
         }
 
         var manager = await CreateKeyManagerAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
@@ -245,11 +340,19 @@ public static class KeyRingVerifier
             return manager.Failure;
         }
 
-        try
+        var rotationResult = await ExecuteBoundedAsync(
+            () => manager.Manager!.CreateNewKey(DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow.AddDays(1)),
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (rotationResult.TimedOut)
         {
-            manager.Manager!.CreateNewKey(DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow.AddDays(1));
+            return Failure(scenario, KeyRingFailureKind.Timeout, "Rotation timed out before the configured bound.");
         }
-        catch (Exception)
+        if (rotationResult.Canceled)
+        {
+            return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
+        }
+        if (rotationResult.Exception is not null)
         {
             return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager could not create a new key.");
         }
@@ -260,69 +363,201 @@ public static class KeyRingVerifier
             return second.Failure;
         }
 
-        return UnprotectAndCompare(scenario, second.Provider!, protectedPayload, canary, SharedPurpose);
+        return await UnprotectAndCompareAsync(
+            scenario,
+            second.Provider!,
+            protectedResult.Value!,
+            canary,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
     }
 
-    private static IDataProtector? CreateProtector(IDataProtectionProvider provider, string purpose)
+    private static async Task<(IDataProtector? Value, KeyRingVerificationResult? Failure)> CreateProtectorAsync(
+        KeyRingScenario scenario,
+        IDataProtectionProvider provider,
+        string purpose,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        try
+        var operation = await ExecuteBoundedAsync(
+            () => provider.CreateProtector(purpose),
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (operation.TimedOut)
         {
-            return provider.CreateProtector(purpose);
+            return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Protector creation timed out before the configured bound."));
         }
-        catch (Exception)
+        if (operation.Canceled)
         {
-            return null;
+            return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
         }
+        if (operation.Exception is not null || operation.Value is null)
+        {
+            return (null, Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: the configured provider could not create a protector."));
+        }
+
+        return (operation.Value, null);
     }
 
-    private static KeyRingVerificationResult UnprotectAndCompare(
+    private static async Task<(byte[]? Value, KeyRingVerificationResult? Failure)> ProtectAsync(
+        KeyRingScenario scenario,
+        IDataProtector protector,
+        byte[] canary,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var operation = await ExecuteBoundedAsync(
+            () => protector.Protect(canary),
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (operation.TimedOut)
+        {
+            return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Protect timed out before the configured bound."));
+        }
+        if (operation.Canceled)
+        {
+            return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
+        }
+        if (operation.Exception is not null || operation.Value is null)
+        {
+            return (null, Failure(scenario, KeyRingFailureKind.Protect, "Protect failed: the configured provider could not protect the synthetic canary."));
+        }
+
+        return (operation.Value, null);
+    }
+
+    private static async Task<KeyRingVerificationResult> UnprotectAndCompareAsync(
         KeyRingScenario scenario,
         IDataProtectionProvider provider,
         byte[] protectedPayload,
         byte[] canary,
-        string purpose)
+        string purpose,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        var protector = CreateProtector(provider, purpose);
-        if (protector is null)
+        var protectorResult = await CreateProtectorAsync(
+            scenario,
+            provider,
+            purpose,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (protectorResult.Failure is not null)
         {
-            return Failure(scenario, KeyRingFailureKind.Unprotect, "Unprotect failed: the configured provider could not create a protector.");
+            return protectorResult.Failure.FailureKind == KeyRingFailureKind.Protect
+                ? Failure(scenario, KeyRingFailureKind.Unprotect, "Unprotect failed: the configured provider could not create a protector.")
+                : protectorResult.Failure;
         }
 
-        try
+        var operation = await ExecuteBoundedAsync(
+            () => protectorResult.Value!.Unprotect(protectedPayload),
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (operation.TimedOut)
         {
-            var actual = protector.Unprotect(protectedPayload);
-            return CryptographicOperations.FixedTimeEquals(actual, canary)
-                ? Success(scenario, "Continuity passed.")
-                : Failure(scenario, KeyRingFailureKind.Unprotect, "Unprotect failed: the provider returned an unexpected payload.");
+            return Failure(scenario, KeyRingFailureKind.Timeout, "Unprotect timed out before the configured bound.");
         }
-        catch (Exception)
+        if (operation.Canceled)
+        {
+            return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
+        }
+        if (operation.Exception is not null || operation.Value is null)
         {
             return Failure(scenario, KeyRingFailureKind.Unprotect, "Unprotect failed: a payload that should survive the provider transition could not be read.");
         }
+
+        return CryptographicOperations.FixedTimeEquals(operation.Value, canary)
+            ? Success(scenario, "Continuity passed.")
+            : Failure(scenario, KeyRingFailureKind.Unprotect, "Unprotect failed: the provider returned an unexpected payload.");
     }
 
-    private static KeyRingVerificationResult ExpectUnprotectFailure(
+    private static async Task<KeyRingVerificationResult> ExpectUnprotectFailureAsync(
         KeyRingScenario scenario,
         IDataProtectionProvider provider,
         byte[] protectedPayload,
-        string purpose)
+        string purpose,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        var protector = CreateProtector(provider, purpose);
-        if (protector is null)
+        var protectorResult = await CreateProtectorAsync(
+            scenario,
+            provider,
+            purpose,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (protectorResult.Failure is not null)
         {
-            return Failure(scenario, KeyRingFailureKind.Unprotect, "Unprotect failed: the configured provider could not create a protector.");
+            return protectorResult.Failure.FailureKind == KeyRingFailureKind.Protect
+                ? Failure(scenario, KeyRingFailureKind.Unprotect, "Unprotect failed: the configured provider could not create a protector.")
+                : protectorResult.Failure;
+        }
+
+        var operation = await ExecuteBoundedAsync(
+            () => protectorResult.Value!.Unprotect(protectedPayload),
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (operation.TimedOut)
+        {
+            return Failure(scenario, KeyRingFailureKind.Timeout, "Isolation check timed out before the configured bound.");
+        }
+        if (operation.Canceled)
+        {
+            return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
+        }
+        if (operation.Exception is CryptographicException)
+        {
+            return Success(scenario, "Isolation passed.");
+        }
+        if (operation.Exception is not null)
+        {
+            return Failure(scenario, KeyRingFailureKind.Unprotect, "Isolation failed: the configured provider could not complete the cross-boundary check.");
+        }
+
+        return Failure(scenario, KeyRingFailureKind.UnexpectedCrossUnprotect, "Isolation failed: a provider from an isolated boundary successfully unprotected a payload.");
+    }
+
+    private static async Task<BoundedOperation<T>> ExecuteBoundedAsync<T>(
+        Func<T> operation,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        Task<T> task;
+        try
+        {
+            task = Task.Run(operation);
+            ObserveFaults(task);
+        }
+        catch (Exception exception)
+        {
+            return new(default, exception, false, false);
         }
 
         try
         {
-            _ = protector.Unprotect(protectedPayload);
-            return Failure(scenario, KeyRingFailureKind.UnexpectedCrossUnprotect, "Isolation failed: a provider from an isolated boundary successfully unprotected a payload.");
+            return new(await task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false), null, false, false);
         }
-        catch (Exception)
+        catch (TimeoutException)
         {
-            return Success(scenario, "Isolation passed.");
+            return new(default, null, true, false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new(default, null, false, true);
+        }
+        catch (Exception exception)
+        {
+            return new(default, exception, false, false);
         }
     }
+
+    private static void ObserveFaults<T>(Task<T> task) =>
+        _ = task.ContinueWith(
+            completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    private readonly record struct BoundedOperation<T>(T? Value, Exception? Exception, bool TimedOut, bool Canceled);
 
     private static async Task<(IDataProtectionProvider? Provider, KeyRingVerificationResult? Failure)> CreateProviderAsync(
         KeyRingScenario scenario,
@@ -340,6 +575,7 @@ public static class KeyRingVerifier
             {
                 return (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the factory returned no operation."));
             }
+            ObserveFaults(task);
         }
         catch (Exception)
         {
@@ -384,6 +620,7 @@ public static class KeyRingVerifier
         try
         {
             task = factory.CreateKeyManagerAsync(linkedSource.Token);
+            ObserveFaults(task);
         }
         catch (Exception)
         {

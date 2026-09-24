@@ -1,4 +1,7 @@
 using KeelMatrix.KeyRingGuard;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using System.Security.Cryptography;
 
 namespace KeelMatrix.KeyRingGuard.UnitTests;
 
@@ -65,6 +68,143 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
+    public async Task ApplicationIsolationProviderFailureDoesNotPass()
+    {
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(unprotect: _ => throw new InvalidOperationException("unrelated provider failure")),
+            TimeSpan.FromSeconds(1));
+
+        var result = await KeyRingVerifier.VerifyAsync(
+            KeyRingScenario.ApplicationIsolation,
+            factory,
+            factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
+        Assert.Equal("Isolation failed: the configured provider could not complete the cross-boundary check.", result.Message);
+    }
+
+    [Fact]
+    public async Task PurposeIsolationProviderFailureDoesNotPass()
+    {
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(unprotect: _ => throw new InvalidOperationException("unrelated provider failure")),
+            TimeSpan.FromSeconds(1));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.PurposeIsolation, factory, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
+        Assert.Equal("Isolation failed: the configured provider could not complete the cross-boundary check.", result.Message);
+    }
+
+    [Fact]
+    public async Task CryptographicIsolationRejectionPasses()
+    {
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(unprotect: _ => throw new CryptographicException("rejection")),
+            TimeSpan.FromSeconds(1));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.PurposeIsolation, factory, factory);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(KeyRingFailureKind.None, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task SynchronousProviderFactoryTimeoutIsBounded()
+    {
+        var factory = new KeyRingProviderFactory(
+            _ =>
+            {
+                Thread.Sleep(250);
+                return new FakeProvider();
+            },
+            TimeSpan.FromMilliseconds(40));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+        Assert.InRange(result.Duration, TimeSpan.Zero, TimeSpan.FromMilliseconds(200));
+    }
+
+    [Fact]
+    public async Task SynchronousProtectTimeoutIsBounded()
+    {
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(protect: value =>
+            {
+                Thread.Sleep(250);
+                return value.ToArray();
+            }),
+            TimeSpan.FromMilliseconds(40));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task SynchronousUnprotectTimeoutIsBounded()
+    {
+        var factoryCalls = 0;
+        var factory = new KeyRingProviderFactory(
+            _ =>
+            {
+                if (Interlocked.Increment(ref factoryCalls) == 2)
+                {
+                    return new FakeProvider(unprotect: value =>
+                    {
+                        Thread.Sleep(250);
+                        return value.ToArray();
+                    });
+                }
+
+                return new FakeProvider();
+            },
+            TimeSpan.FromMilliseconds(40));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task SynchronousKeyManagerCreationTimeoutIsBounded()
+    {
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, IDataProtectionProvider>)(_ => new FakeProvider()),
+            TimeSpan.FromMilliseconds(40),
+            (Func<CancellationToken, IKeyManager>)(_ =>
+            {
+                Thread.Sleep(250);
+                return new SlowKeyManager();
+            }));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task SynchronousRotationTimeoutIsBounded()
+    {
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, IDataProtectionProvider>)(_ => new FakeProvider()),
+            TimeSpan.FromMilliseconds(40),
+            (Func<CancellationToken, IKeyManager>)(_ => new SlowKeyManager()));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+    }
+
+    [Fact]
     public async Task MissingSecondaryFactoryIsAnInvalidScenario()
     {
         var factory = new KeyRingProviderFactory(_ => new FakeProvider(), TimeSpan.FromSeconds(1));
@@ -113,4 +253,21 @@ public sealed class VerifierFailureTests
         Assert.DoesNotContain(Convert.ToBase64String(protectedPayload!), result.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("master material", result.Message, StringComparison.Ordinal);
     }
+}
+
+internal sealed class SlowKeyManager : IKeyManager
+{
+    public IKey CreateNewKey(DateTimeOffset activationDate, DateTimeOffset expirationDate)
+    {
+        Thread.Sleep(250);
+        return null!;
+    }
+
+    public IReadOnlyCollection<IKey> GetAllKeys() => [];
+
+    public CancellationToken GetCacheExpirationToken() => CancellationToken.None;
+
+    public void RevokeKey(Guid keyId, string? reason) => throw new NotSupportedException();
+
+    public void RevokeAllKeys(DateTimeOffset revocationDate, string? reason) => throw new NotSupportedException();
 }

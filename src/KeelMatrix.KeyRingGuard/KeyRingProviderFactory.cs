@@ -5,6 +5,7 @@ namespace KeelMatrix.KeyRingGuard;
 
 /// <summary>
 /// Defines how KeyRingGuard constructs an independent Data Protection provider.
+/// Each synchronous or asynchronous operation is observed with the configured bound by the verifier.
 /// </summary>
 public sealed class KeyRingProviderFactory
 {
@@ -15,7 +16,7 @@ public sealed class KeyRingProviderFactory
     /// Initializes a synchronous provider factory.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
-    /// <param name="timeout">The maximum time allowed for one provider or key-manager operation.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, or key-manager operation.</param>
     public KeyRingProviderFactory(
         Func<CancellationToken, IDataProtectionProvider> createProvider,
         TimeSpan timeout)
@@ -27,7 +28,7 @@ public sealed class KeyRingProviderFactory
     /// Initializes a synchronous provider and key-manager factory.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
-    /// <param name="timeout">The maximum time allowed for one provider or key-manager operation.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, or key-manager operation.</param>
     /// <param name="createKeyManager">Creates a key manager for rotation verification.</param>
     public KeyRingProviderFactory(
         Func<CancellationToken, IDataProtectionProvider> createProvider,
@@ -36,10 +37,10 @@ public sealed class KeyRingProviderFactory
     {
         ArgumentNullException.ThrowIfNull(createProvider);
 
-        _createProvider = cancellationToken => Task.FromResult(createProvider(cancellationToken));
+        _createProvider = cancellationToken => Task.Run(() => createProvider(cancellationToken));
         _createKeyManager = createKeyManager is null
             ? null
-            : cancellationToken => Task.FromResult(createKeyManager(cancellationToken));
+            : cancellationToken => Task.Run(() => createKeyManager(cancellationToken));
         Timeout = ValidateTimeout(timeout);
     }
 
@@ -47,7 +48,7 @@ public sealed class KeyRingProviderFactory
     /// Initializes an asynchronous provider factory.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
-    /// <param name="timeout">The maximum time allowed for one provider or key-manager operation.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, or key-manager operation.</param>
     public KeyRingProviderFactory(
         Func<CancellationToken, Task<IDataProtectionProvider>> createProvider,
         TimeSpan timeout)
@@ -59,7 +60,7 @@ public sealed class KeyRingProviderFactory
     /// Initializes an asynchronous provider and key-manager factory.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
-    /// <param name="timeout">The maximum time allowed for one provider or key-manager operation.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, or key-manager operation.</param>
     /// <param name="createKeyManager">Creates a key manager for rotation verification.</param>
     public KeyRingProviderFactory(
         Func<CancellationToken, Task<IDataProtectionProvider>> createProvider,
@@ -68,8 +69,11 @@ public sealed class KeyRingProviderFactory
     {
         ArgumentNullException.ThrowIfNull(createProvider);
 
-        _createProvider = createProvider;
-        _createKeyManager = createKeyManager;
+        _createProvider = cancellationToken => Task.Run(
+            () => createProvider(cancellationToken));
+        _createKeyManager = createKeyManager is null
+            ? null
+            : cancellationToken => Task.Run(() => createKeyManager(cancellationToken));
         Timeout = ValidateTimeout(timeout);
     }
 

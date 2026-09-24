@@ -2,6 +2,7 @@ _rels/.rels
 [Content_Types].xml
 KeelMatrix.KeyRingGuard.nuspec
 LICENSE
+icon.png
 README.md
 lib/net8.0/KeelMatrix.KeyRingGuard.dll
 lib/net8.0/KeelMatrix.KeyRingGuard.xml
