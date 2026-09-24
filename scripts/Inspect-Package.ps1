@@ -75,7 +75,7 @@ try {
     $dependencies = @($metadata.dependencies.group.dependency | ForEach-Object id)
     if ($dependencies -contains 'KeelMatrix.Telemetry' -or $dependencies -match 'Redis|Azure|AWS|StackExchange|SqlClient') { throw "Unexpected provider or telemetry dependency: $($dependencies -join ', ')." }
 
-    $forbidden = $actual | Where-Object { $_ -match '(?i)(\.env|telemetry|research|\.pfx$|\.p12$|\.pem$|secret|credential)' }
+    $forbidden = $actual | Where-Object { $_ -match '(?i)([.]env|telemetry|research|[.]pfx$|[.]p12$|[.]pem$|secret|credential)' }
     if ($forbidden) { throw "Forbidden package content found: $($forbidden -join ', ')." }
 
     Write-Output "Package inspection: PASS ($package)"
@@ -100,6 +100,6 @@ try {
 
 $projectText = Get-Content -Raw -LiteralPath $project
 Write-Output 'Icon pack configuration:'
-$projectText -split "`r?`n" | Where-Object { $_ -match 'PackageIcon|icon\.png' } | ForEach-Object { Write-Output $_.Trim() }
+$projectText -split "`r?`n" | Where-Object { $_ -match 'PackageIcon|icon[.]png' } | ForEach-Object { Write-Output $_.Trim() }
 Write-Output "Resolved icon source path: $([System.IO.Path]::Combine($repositoryRoot, 'icon.png'))"
 Write-Output 'Icon contract: PASS (source and package-root icon.png are valid and byte-identical)'

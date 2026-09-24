@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$contract = Join-Path $RepositoryRoot 'scripts\Test-ChangelogContract.ps1'
+$contract = Join-Path $RepositoryRoot 'scripts' 'Test-ChangelogContract.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('keyringguard-changelog-contract-' + [Guid]::NewGuid().ToString('N'))
 
 function Invoke-Contract([string]$Root, [string]$Tag) {

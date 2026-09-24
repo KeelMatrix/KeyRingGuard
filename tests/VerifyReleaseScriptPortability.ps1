@@ -12,11 +12,38 @@ function Fail([string]$Message) {
 
 if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { Fail "Release workflow '$WorkflowPath' does not exist." }
 
+# The checked set is every PowerShell script under scripts and tests. The literal separator allowlist is intentionally empty:
+# these scripts must express paths through portable path APIs and forward-slash repository references.
+$windowsPathSeparator = [char]92
+$scriptRoots = @(
+    (Join-Path $RepositoryRoot 'scripts'),
+    (Join-Path $RepositoryRoot 'tests')
+)
+$checkedScripts = @(
+    foreach ($scriptRoot in $scriptRoots) {
+        if (-not (Test-Path -LiteralPath $scriptRoot -PathType Container)) { Fail "script root '$scriptRoot' does not exist." }
+        Get-ChildItem -LiteralPath $scriptRoot -Filter '*.ps1' -File -Recurse
+    }
+) | Sort-Object -Property FullName
+
+if ($checkedScripts.Count -eq 0) { Fail 'the checked script set is empty.' }
+
+foreach ($scriptFile in $checkedScripts) {
+    $scriptText = Get-Content -Raw -LiteralPath $scriptFile.FullName
+    $separatorIndex = $scriptText.IndexOf($windowsPathSeparator)
+    if ($separatorIndex -lt 0) { continue }
+
+    $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $scriptFile.FullName).Replace($windowsPathSeparator, '/')
+    $lineNumber = ($scriptText.Substring(0, $separatorIndex) -split "`n").Count
+    Fail "$relativePath contains a literal Windows path separator at line $lineNumber. The portability contract allowlist is empty."
+}
+
 $workflowText = Get-Content -Raw -LiteralPath $WorkflowPath
 $scriptNames = [System.Collections.Generic.Queue[string]]::new()
 $discovered = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
-foreach ($match in [regex]::Matches($workflowText, '(?i)scripts[\\/](?<name>[A-Za-z0-9_.-]+\.ps1)')) {
+$separatorPattern = '(?:/|' + [regex]::Escape($windowsPathSeparator) + ')'
+foreach ($match in [regex]::Matches($workflowText, ('(?i)scripts' + $separatorPattern + '(?<name>[A-Za-z0-9_.-]+[.]ps1)'))) {
     $scriptNames.Enqueue($match.Groups['name'].Value)
 }
 
@@ -37,7 +64,7 @@ while ($scriptNames.Count -gt 0) {
     foreach ($parameter in $ast.ParamBlock.Parameters) {
         if ($null -eq $parameter.DefaultValue) { continue }
         $defaultText = $parameter.DefaultValue.Extent.Text
-        if ($defaultText -match '\\') {
+        if ($defaultText.IndexOf($windowsPathSeparator) -ge 0) {
             Fail "$scriptName parameter '$($parameter.Name.VariablePath.UserPath)' contains a Windows-only backslash in its default expression: $defaultText"
         }
 
@@ -71,7 +98,7 @@ while ($scriptNames.Count -gt 0) {
         }
     }
 
-    foreach ($match in [regex]::Matches((Get-Content -Raw -LiteralPath $scriptPath), '(?i)(?<name>[A-Za-z0-9_.-]+\.ps1)')) {
+    foreach ($match in [regex]::Matches((Get-Content -Raw -LiteralPath $scriptPath), '(?i)(?<name>[A-Za-z0-9_.-]+[.]ps1)')) {
         $helper = $match.Groups['name'].Value
         if (Test-Path -LiteralPath (Join-Path $RepositoryRoot 'scripts' $helper) -PathType Leaf) {
             $scriptNames.Enqueue($helper)
@@ -79,4 +106,4 @@ while ($scriptNames.Count -gt 0) {
     }
 }
 
-Write-Output "Release script portability contract: PASS ($($discovered.Count) workflow/helper scripts; default paths resolve on this host)."
+Write-Output "Release script portability contract: PASS ($($checkedScripts.Count) scripts checked; $($discovered.Count) workflow/helper scripts; default paths resolve on this host; literal separator allowlist: empty)."

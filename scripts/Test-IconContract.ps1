@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$PackagePath = (Join-Path $PSScriptRoot '..\artifacts\packages\KeelMatrix.KeyRingGuard.0.1.0.nupkg'),
+    [string]$PackagePath = (Join-Path $PSScriptRoot '..' 'artifacts' 'packages' 'KeelMatrix.KeyRingGuard.0.1.0.nupkg'),
     [switch]$SourceOnly
 )
 

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$PackagePath = (Join-Path $PSScriptRoot '..\artifacts\packages\KeelMatrix.KeyRingGuard.0.1.0.nupkg')
+    [string]$PackagePath = (Join-Path $PSScriptRoot '..' 'artifacts' 'packages' 'KeelMatrix.KeyRingGuard.0.1.0.nupkg')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,7 +28,7 @@ Set-Content -LiteralPath $nugetConfig -Value @"
 $previousNuGetPackages = $env:NUGET_PACKAGES
 $env:NUGET_PACKAGES = $packages
 try {
-    $consumer = Join-Path $root 'tests\KeelMatrix.KeyRingGuard.PackageConsumer\KeelMatrix.KeyRingGuard.PackageConsumer.csproj'
+    $consumer = Join-Path $root 'tests' 'KeelMatrix.KeyRingGuard.PackageConsumer' 'KeelMatrix.KeyRingGuard.PackageConsumer.csproj'
     dotnet restore $consumer --configfile $nugetConfig --no-cache --force --packages $packages
     if ($LASTEXITCODE -ne 0) { throw "Package consumer restore failed with exit code $LASTEXITCODE." }
     dotnet run --project $consumer --configuration Release --no-restore
