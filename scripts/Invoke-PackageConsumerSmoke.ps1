@@ -22,6 +22,14 @@ Set-Content -LiteralPath $nugetConfig -Value @"
     <add key="local" value="$escapedFeed" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
   </packageSources>
+  <packageSourceMapping>
+    <packageSource key="local">
+      <package pattern="KeelMatrix.KeyRingGuard" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
 </configuration>
 "@ -NoNewline
 
@@ -29,9 +37,24 @@ $previousNuGetPackages = $env:NUGET_PACKAGES
 $env:NUGET_PACKAGES = $packages
 try {
     $consumer = Join-Path $root 'tests' 'KeelMatrix.KeyRingGuard.PackageConsumer' 'KeelMatrix.KeyRingGuard.PackageConsumer.csproj'
+    $consumerSourcePath = Join-Path $root 'tests' 'KeelMatrix.KeyRingGuard.PackageConsumer' 'Program.cs'
+    $usage = Get-Content -Raw -LiteralPath (Join-Path $root 'docs' 'usage.md')
+    $lineBreak = '(?:' + [char]13 + ')?' + [char]10
+    $quickStartPattern = '(?ms)^## Quick Start' + $lineBreak + '.*?^```csharp' + $lineBreak + '(?<snippet>.*?)^```'
+    $quickStart = [regex]::Match($usage, $quickStartPattern)
+    if (-not $quickStart.Success) { throw 'Could not locate the documented Quick Start C# snippet.' }
+    $documentedSnippet = ($quickStart.Groups['snippet'].Value -replace "`r`n", "`n").TrimEnd([char]10)
+    $consumerSource = (Get-Content -Raw -LiteralPath $consumerSourcePath -ErrorAction Stop -Encoding utf8) -replace "`r`n", "`n"
+    $consumerSource = $consumerSource.TrimEnd([char]10)
+    if (-not [string]::Equals($consumerSource, $documentedSnippet, [StringComparison]::Ordinal)) {
+        throw 'The package consumer source must match the documented Quick Start snippet verbatim.'
+    }
+
     dotnet restore $consumer --configfile $nugetConfig --no-cache --force --packages $packages
     if ($LASTEXITCODE -ne 0) { throw "Package consumer restore failed with exit code $LASTEXITCODE." }
-    dotnet run --project $consumer --configuration Release --no-restore
+    dotnet build $consumer --configuration Release --no-restore
+    if ($LASTEXITCODE -ne 0) { throw "Package consumer build failed with exit code $LASTEXITCODE." }
+    dotnet run --project $consumer --configuration Release --no-restore --no-build
     if ($LASTEXITCODE -ne 0) { throw "Package consumer smoke failed with exit code $LASTEXITCODE." }
     Write-Output 'Package consumer smoke: PASS'
 } finally {

@@ -54,7 +54,7 @@ $inlineWhitespaceClass = '[' + [string]::Concat($inlineWhitespaceCharacters) + '
 $lineBreakCharacters = [string]::Concat([char]13, [char]10)
 $trailerLabelPattern = '(?:Co' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'Authored' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'By|Co' + $inlineWhitespaceClass + '_' + $inlineWhitespaceClass + 'Author(?:ed)?|Signed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'off' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Reviewed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Acked' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Tested' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by|Committed' + $inlineWhitespaceClass + '-' + $inlineWhitespaceClass + 'by)'
 $trailerPattern = '(?im)^' + $inlineWhitespaceClass + '(?<label>' + $trailerLabelPattern + ')' + $inlineWhitespaceClass + ':' + $inlineWhitespaceClass + '(?<identity>[^<' + $lineBreakCharacters + ']+?)(?:' + $inlineWhitespaceClass + '<(?<email>[^>' + $lineBreakCharacters + ']*)>)?' + $inlineWhitespaceClass + '$'
-$internalIdentityTerms = @(
+$unambiguousAutomationIdentityTerms = @(
     ('ag' + 'ent')
     ('mo' + 'del')
     ('assis' + 'tant')
@@ -69,36 +69,83 @@ $internalIdentityTerms = @(
     'actions'
     'ci'
     'cd'
-    'build'
-    'builder'
-    'pipeline'
-    'pipelines'
-    'runner'
     'robot'
     'bot'
     'automation'
     'automated'
-    'service'
-    'account'
     'noreply'
     'no-reply'
     'no_reply'
-    'github actions'
     'buildkite'
-    'jenkins'
-    'azure pipelines'
-    'teamcity'
-    'circleci'
-    'gitlab ci'
-    'travis'
     'appveyor'
     'drone'
     'woodpecker'
-    'argo'
     'tekton'
 )
-$internalIdentityAlternatives = @($internalIdentityTerms | ForEach-Object { [regex]::Escape($_) })
-$internalIdentityPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$internalIdentityAlternatives) + ')(?![A-Za-z])'
+$unambiguousAutomationIdentityAlternatives = @($unambiguousAutomationIdentityTerms | ForEach-Object { [regex]::Escape($_) })
+$unambiguousAutomationIdentityPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$unambiguousAutomationIdentityAlternatives) + ')(?![A-Za-z])'
+$ciProductIdentityTerms = @(
+    'github actions'
+    'buildkite ci'
+    'azure pipelines'
+    'gitlab ci'
+    'circleci'
+    'teamcity'
+    'appveyor'
+    'drone'
+    'woodpecker'
+    'tekton'
+)
+$ciProductIdentityAlternatives = @($ciProductIdentityTerms | ForEach-Object { [regex]::Escape($_) })
+$ciProductIdentityPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$ciProductIdentityAlternatives) + ')(?![A-Za-z])'
+$ambiguousIdentityTerms = @(
+    'travis'
+    'jenkins'
+    'argo'
+    'build'
+    'builder'
+    'runner'
+    'service'
+    'account'
+    'pipeline'
+    'pipelines'
+)
+$ambiguousIdentityAlternatives = @($ambiguousIdentityTerms | ForEach-Object { [regex]::Escape($_) })
+$ambiguousIdentityPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$ambiguousIdentityAlternatives) + ')(?![A-Za-z])'
+$machineEmailTerms = @(
+    'noreply'
+    'no-reply'
+    'no_reply'
+    'agent'
+    'bot'
+    'robot'
+    'automation'
+    'automated'
+    'ci'
+    'cd'
+    'actions'
+    'model'
+    'assistant'
+    'github-actions'
+    'githubactions'
+    'buildkite'
+    'buildkite-ci'
+    'azure-pipelines'
+    'azurepipelines'
+    'gitlab-ci'
+    'gitlabci'
+    'circleci'
+    'teamcity'
+    'appveyor'
+    'drone'
+    'woodpecker'
+    'tekton'
+    'travis-ci'
+    'jenkins-ci'
+    'argo-ci'
+)
+$machineEmailAlternatives = @($machineEmailTerms | ForEach-Object { [regex]::Escape($_) })
+$machineEmailPattern = '(?i)(?:^|[@._-])(?:' + [string]::Join('|', [string[]]$machineEmailAlternatives) + ')(?=$|[@._-])'
 
 foreach ($commit in $commits) {
     $refDescription = if ($commitRefs.ContainsKey($commit)) { $commitRefs[$commit] -join ', ' } else { '<unmapped ref>' }
@@ -131,8 +178,15 @@ foreach ($commit in $commits) {
             throw "Commit $commit (refs: $refDescription) contains a $label trailer for non-company author identity '$identity'."
         }
         $isAllowedCompanyCoAuthor = $labelWithoutWhitespace -ieq 'Co-Authored-By' -and $identity -in @('KeelMatrix', 'Dependabot')
-        if (-not $isAllowedCompanyCoAuthor -and
-            ([regex]::IsMatch($identity, $internalIdentityPattern) -or [regex]::IsMatch($email, $internalIdentityPattern))) {
+        $isUnambiguousAutomation =
+            [regex]::IsMatch($identity, $unambiguousAutomationIdentityPattern) -or
+            [regex]::IsMatch($email, $unambiguousAutomationIdentityPattern) -or
+            [regex]::IsMatch($identity, $ciProductIdentityPattern) -or
+            [regex]::IsMatch($email, $ciProductIdentityPattern)
+        $hasAmbiguousAutomationSignal =
+            [regex]::IsMatch($identity, $ambiguousIdentityPattern) -and
+            [regex]::IsMatch($email, $machineEmailPattern)
+        if (-not $isAllowedCompanyCoAuthor -and ($isUnambiguousAutomation -or $hasAmbiguousAutomationSignal)) {
             $reportedIdentity = if ($email) { "$identity <$email>" } else { $identity }
             throw "Commit $commit (refs: $refDescription) contains a $label trailer for internal automation identity '$reportedIdentity'."
         }
@@ -154,4 +208,4 @@ foreach ($relativePath in $tracked) {
     }
 }
 
-Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable commit refs, subjects and bodies; form feed and vertical tab are accepted as label separators; annotated tag messages and Git notes are not scanned; split, encoded and obfuscated forms are not detected.)'
+Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable commit refs, subjects and bodies; unambiguous automation identities and CI product phrases are rejected directly, while ambiguous human-name identities require a machine-signaled email; form feed and vertical tab are accepted as label separators; annotated tag messages and Git notes are not scanned; split, encoded and obfuscated forms are not detected.)'

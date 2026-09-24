@@ -74,6 +74,17 @@ try {
         'Tested-by: Test Maintainer <tests@example.invalid>'
         'Committed-by: Release Maintainer <release@example.invalid>'
         'Signed-off-by: Robotics <robotics@example.org>'
+        'Signed-off-by: Travis <travis@example.org>'
+        'Signed-off-by: Jenkins <jenkins@example.org>'
+        'Signed-off-by: Argo <argo@example.org>'
+        'Signed-off-by: Build <build@example.org>'
+        'Signed-off-by: Builder <builder@example.org>'
+        'Signed-off-by: Runner <runner@example.org>'
+        'Signed-off-by: Jane Builder <jane.builder@example.org>'
+        'Signed-off-by: Pat Service <pat.service@example.org>'
+        'Signed-off-by: Account <account@example.org>'
+        'Signed-off-by: Pipeline <pipeline@example.org>'
+        'Signed-off-by: Service <service@example.org>'
     )
     $cleanWithHumanTrailers = New-Fixture 'clean-human-trailers' (@('Keep history clean', '') + $humanTrailers -join [Environment]::NewLine)
     $result = Invoke-Hygiene $cleanWithHumanTrailers
@@ -104,25 +115,47 @@ try {
         @{ Name = 'committed-by'; Message = @('Fixture history', '', ('Committed-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine }
         @{ Name = 'github-actions'; Message = @('Fixture history', '', 'Signed-off-by: GitHub Actions') -join [Environment]::NewLine }
         @{ Name = 'buildkite-ci'; Message = @('Fixture history', '', 'Reviewed-by: Buildkite CI') -join [Environment]::NewLine }
-        @{ Name = 'jenkins'; Message = @('Fixture history', '', 'Acked-by: Jenkins') -join [Environment]::NewLine }
         @{ Name = 'azure-pipelines'; Message = @('Fixture history', '', 'Tested-by: Azure Pipelines') -join [Environment]::NewLine }
         @{ Name = 'ci-automation'; Message = @('Fixture history', '', 'Committed-by: CI Automation') -join [Environment]::NewLine }
         @{ Name = 'teamcity'; Message = @('Fixture history', '', 'Signed-off-by: TeamCity') -join [Environment]::NewLine }
         @{ Name = 'circleci'; Message = @('Fixture history', '', 'Reviewed-by: CircleCI') -join [Environment]::NewLine }
         @{ Name = 'gitlab-ci'; Message = @('Fixture history', '', 'Acked-by: GitLab CI') -join [Environment]::NewLine }
-        @{ Name = 'travis'; Message = @('Fixture history', '', 'Tested-by: Travis') -join [Environment]::NewLine }
         @{ Name = 'appveyor'; Message = @('Fixture history', '', 'Committed-by: AppVeyor') -join [Environment]::NewLine }
         @{ Name = 'drone'; Message = @('Fixture history', '', 'Signed-off-by: Drone') -join [Environment]::NewLine }
         @{ Name = 'woodpecker'; Message = @('Fixture history', '', 'Reviewed-by: Woodpecker') -join [Environment]::NewLine }
-        @{ Name = 'argo'; Message = @('Fixture history', '', 'Acked-by: Argo') -join [Environment]::NewLine }
         @{ Name = 'tekton'; Message = @('Fixture history', '', 'Tested-by: Tekton') -join [Environment]::NewLine }
         @{ Name = 'address-only-noreply'; Message = @('Fixture history', '', 'Signed-off-by: Human Maintainer <noreply@example.invalid>') -join [Environment]::NewLine }
         @{ Name = 'address-only-vendor'; Message = @('Fixture history', '', 'Signed-off-by: Human Maintainer <openai@example.invalid>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-bot'; Message = @('Fixture history', '', 'Signed-off-by: bot <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-robot'; Message = @('Fixture history', '', 'Signed-off-by: robot <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-automation'; Message = @('Fixture history', '', 'Signed-off-by: automation <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-automated'; Message = @('Fixture history', '', 'Signed-off-by: automated <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-ci'; Message = @('Fixture history', '', 'Signed-off-by: ci <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-cd'; Message = @('Fixture history', '', 'Signed-off-by: cd <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-actions'; Message = @('Fixture history', '', 'Signed-off-by: actions <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-agent'; Message = @('Fixture history', '', 'Signed-off-by: agent <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-model'; Message = @('Fixture history', '', 'Signed-off-by: model <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-assistant'; Message = @('Fixture history', '', 'Signed-off-by: assistant <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-noreply'; Message = @('Fixture history', '', 'Signed-off-by: noreply <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-no-reply'; Message = @('Fixture history', '', 'Signed-off-by: no-reply <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'unambiguous-no-reply-underscore'; Message = @('Fixture history', '', 'Signed-off-by: no_reply <person@example.org>') -join [Environment]::NewLine }
+        @{ Name = 'github-actions'; Message = @('Fixture history', '', 'Signed-off-by: GitHub Actions <person@example.org>') -join [Environment]::NewLine }
         @{ Name = 'co-author'; Message = @('Fixture history', '', 'co_author: KeelMatrix') -join [Environment]::NewLine }
         @{ Name = 'subject-only'; Message = $automationIdentity + ' in the subject' }
         @{ Name = 'bad-trailer'; Message = @('Fixture history', '', ('Co-Authored' + '-By: NotKeelMatrix <noreply@example.invalid>')) -join [Environment]::NewLine; SideBranch = $true }
         @{ Name = 'merge-commit'; Message = @('Merge side branch', '', ('Signed-off-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine; Merge = $true }
         @{ Name = 'non-company-author'; Message = 'Clean side branch'; NonCompanyAuthor = $true }
+        @{ Name = 'ambiguous-travis-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Travis <noreply@travis-ci.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-jenkins-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Jenkins <jenkins@users.noreply.github.com>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-argo-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Argo <argo@ci.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-build-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Build <build@buildkite.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-builder-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Builder <builder@buildkite.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-runner-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Runner <runner@github-actions.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-jane-builder-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Jane Builder <jane.builder@noreply.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-pat-service-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Pat Service <pat.service@ci.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-account-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Account <account@users.noreply.github.com>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-pipeline-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Pipeline <pipeline@ci.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'ambiguous-service-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Service <service@automation.example.org>') -join [Environment]::NewLine }
     )
 
     foreach ($fixtureSpec in $fixtures) {

@@ -2,28 +2,49 @@
 
 ## Install
 
-Install the package into the test project that owns the provider configuration:
+Install both packages into the test project that owns the provider configuration:
 
 ```text
 dotnet add package KeelMatrix.KeyRingGuard
+dotnet add package Microsoft.AspNetCore.DataProtection.Extensions
 ```
+
+The Extensions package provides `DataProtectionProvider.Create`, while KeyRingGuard keeps provider integrations consumer-owned.
 
 ## Quick Start
 
 The package does not configure Data Protection for the application. Pass a factory that creates the same provider configuration the application uses, normally with a temporary or dedicated test store.
 
 ```csharp
-var factory = new KeyRingProviderFactory(
-    _ => DataProtectionProvider.Create(
-        keyStorePath,
-        builder => builder.SetApplicationName("Orders.App")),
-    TimeSpan.FromSeconds(5));
+using KeelMatrix.KeyRingGuard;
+using Microsoft.AspNetCore.DataProtection;
 
-var result = await KeyRingVerifier.VerifyAsync(
-    KeyRingScenario.RestartContinuity,
-    factory);
+var keyStorePath = Path.Combine(Path.GetTempPath(), "keyringguard-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(keyStorePath);
 
-Assert.True(result.Succeeded, result.Message);
+try
+{
+    var factory = new KeyRingProviderFactory(
+        _ => DataProtectionProvider.Create(
+            new DirectoryInfo(keyStorePath),
+            builder => builder.SetApplicationName("Sample.App")),
+        TimeSpan.FromSeconds(5));
+
+    var result = await KeyRingVerifier.VerifyAsync(
+        KeyRingScenario.RestartContinuity,
+        factory);
+
+    if (!result.Succeeded)
+    {
+        throw new InvalidOperationException(result.Message);
+    }
+
+    Console.WriteLine("KeyRingGuard quick start: PASS");
+}
+finally
+{
+    Directory.Delete(keyStorePath, recursive: true);
+}
 ```
 
 Factories are caller-owned. KeyRingGuard does not silently replace a failed or missing factory with an in-memory provider.
@@ -69,7 +90,7 @@ Any `CryptographicException`, including a derived exception type, is treated as 
 
 ```csharp
 var factory = new KeyRingProviderFactory(
-    _ => DataProtectionProvider.Create(keyStorePath, builder => builder.SetApplicationName("Orders.App")),
+    _ => DataProtectionProvider.Create(new DirectoryInfo(keyStorePath), builder => builder.SetApplicationName("Orders.App")),
     TimeSpan.FromSeconds(5),
     _ => keyManager);
 

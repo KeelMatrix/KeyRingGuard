@@ -4,28 +4,49 @@
 
 ## Install
 
-Install it in a test project:
+Install both packages in a test project:
 
 ```text
 dotnet add package KeelMatrix.KeyRingGuard
+dotnet add package Microsoft.AspNetCore.DataProtection.Extensions
 ```
+
+The Extensions package provides `DataProtectionProvider.Create`, while KeyRingGuard keeps provider integrations consumer-owned.
 
 ## Quick Start
 
 First success:
 
 ```csharp
-var factory = new KeyRingProviderFactory(
-    _ => DataProtectionProvider.Create(
-        keyStorePath,
-        builder => builder.SetApplicationName("Sample.App")),
-    TimeSpan.FromSeconds(5));
+using KeelMatrix.KeyRingGuard;
+using Microsoft.AspNetCore.DataProtection;
 
-var result = await KeyRingVerifier.VerifyAsync(
-    KeyRingScenario.RestartContinuity,
-    factory);
+var keyStorePath = Path.Combine(Path.GetTempPath(), "keyringguard-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(keyStorePath);
 
-Assert.True(result.Succeeded, result.Message);
+try
+{
+    var factory = new KeyRingProviderFactory(
+        _ => DataProtectionProvider.Create(
+            new DirectoryInfo(keyStorePath),
+            builder => builder.SetApplicationName("Sample.App")),
+        TimeSpan.FromSeconds(5));
+
+    var result = await KeyRingVerifier.VerifyAsync(
+        KeyRingScenario.RestartContinuity,
+        factory);
+
+    if (!result.Succeeded)
+    {
+        throw new InvalidOperationException(result.Message);
+    }
+
+    Console.WriteLine("KeyRingGuard quick start: PASS");
+}
+finally
+{
+    Directory.Delete(keyStorePath, recursive: true);
+}
 ```
 
 ## Supported runtime and platforms
