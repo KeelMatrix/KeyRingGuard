@@ -1,12 +1,14 @@
 # KeyRingGuard usage
 
-## Installation and first success
+## Install
 
 Install the package into the test project that owns the provider configuration:
 
 ```text
 dotnet add package KeelMatrix.KeyRingGuard
 ```
+
+## Quick Start
 
 The package does not configure Data Protection for the application. Pass a factory that creates the same provider configuration the application uses, normally with a temporary or dedicated test store.
 
@@ -30,7 +32,7 @@ Factories are caller-owned. KeyRingGuard does not silently replace a failed or m
 
 `RestartContinuity` creates a provider, protects a generated in-memory canary, creates a second provider from the same factory, and checks that the second provider can unprotect the payload. This is the test for persistence across a process restart or deployment replacement.
 
-## Replica A↔B sharing
+## Replica sharing
 
 `ReplicaSharing` accepts a second factory and checks both directions. Configure both factories with the intended shared store and the same application discriminator:
 
@@ -94,6 +96,6 @@ Data Protection can auto-generate keys. A verification against a real shared sto
 
 KeyRingGuard itself performs no network calls and ships no Redis, Azure, AWS, or database SDK. A caller may supply a factory backed by one of those systems. Bound every provider operation with a finite timeout, honor cancellation, use test credentials through the host's secure configuration, and isolate the test data. A timeout or provider failure is returned as a bounded result; it is never replaced with an in-memory provider.
 
-## Diagnostics and privacy
+## Safety and privacy
 
 The canary is random, bounded, ephemeral, and kept in memory. Result messages never include canaries, protected payloads, key XML, master material, key identifiers, store paths, application names, or raw provider exception text. KeyRingGuard has no telemetry dependency.

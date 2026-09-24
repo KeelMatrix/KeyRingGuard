@@ -28,6 +28,17 @@ Assert-Contains $text 'NuGet/login@v1' 'the publish job must use NuGet Trusted P
 Assert-Contains $text 'user: dmitriyzen' 'the publish job must use the approved NuGet username.'
 Assert-Contains $text 'id-token: write' 'only the publish job should request the OIDC token permission.'
 Assert-Contains $text 'dotnet nuget push' 'publication must occur only after validation.'
+Assert-Contains $text 'dotnet format KeelMatrix.KeyRingGuard.sln --no-restore --verify-no-changes' 'release validation must run the pinned-SDK formatting gate.'
+Assert-Contains $text 'dotnet-version: 10.0.401' 'release validation must install the SDK pinned by global.json.'
+
+$publishStart = $text.IndexOf('      - name: Publish validated package', [StringComparison]::Ordinal)
+if ($publishStart -lt 0) { throw 'Release workflow contract failed: the publish step is missing.' }
+$publishBody = $text.Substring($publishStart)
+$primaryPushes = @([regex]::Matches($publishBody, '(?m)^.*dotnet nuget push.*[.]nupkg.*$'))
+$symbolPushes = @([regex]::Matches($publishBody, '(?m)^.*dotnet nuget push.*[.]snupkg.*$'))
+if ($primaryPushes.Count -ne 1 -or $symbolPushes.Count -ne 1) {
+    throw "Release workflow contract failed: the publish step must push exactly one .nupkg and exactly one .snupkg (found $($primaryPushes.Count) and $($symbolPushes.Count))."
+}
 
 $onBlock = [regex]::Match($text, ('(?ms)^on:' + $whitespace + '*(?<body>.*?)(?=^permissions:|' + $endOfString + ')')).Groups['body'].Value
 if ([string]::IsNullOrWhiteSpace($onBlock)) { throw 'Release workflow contract failed: the workflow must declare an on block.' }

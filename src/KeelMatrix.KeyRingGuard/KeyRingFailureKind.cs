@@ -55,8 +55,4 @@ public enum KeyRingFailureKind
     /// </summary>
     RotationFailure,
 
-    /// <summary>
-    /// An optional non-secret key-ring metadata check failed.
-    /// </summary>
-    MetadataHealth
 }

@@ -6,7 +6,6 @@ KeelMatrix.KeyRingGuard.IsolationExpectation.RejectCrossUnprotect = 0 -> KeelMat
 KeelMatrix.KeyRingGuard.KeyRingFailureKind
 KeelMatrix.KeyRingGuard.KeyRingFailureKind.Canceled = 7 -> KeelMatrix.KeyRingGuard.KeyRingFailureKind
 KeelMatrix.KeyRingGuard.KeyRingFailureKind.InvalidScenario = 1 -> KeelMatrix.KeyRingGuard.KeyRingFailureKind
-KeelMatrix.KeyRingGuard.KeyRingFailureKind.MetadataHealth = 10 -> KeelMatrix.KeyRingGuard.KeyRingFailureKind
 KeelMatrix.KeyRingGuard.KeyRingFailureKind.None = 0 -> KeelMatrix.KeyRingGuard.KeyRingFailureKind
 KeelMatrix.KeyRingGuard.KeyRingFailureKind.Protect = 3 -> KeelMatrix.KeyRingGuard.KeyRingFailureKind
 KeelMatrix.KeyRingGuard.KeyRingFailureKind.ProviderCreation = 2 -> KeelMatrix.KeyRingGuard.KeyRingFailureKind

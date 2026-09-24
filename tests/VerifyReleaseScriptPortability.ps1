@@ -12,28 +12,32 @@ function Fail([string]$Message) {
 
 if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { Fail "Release workflow '$WorkflowPath' does not exist." }
 
-# The checked set is every PowerShell script under scripts and tests. The literal separator allowlist is intentionally empty:
-# these scripts must express paths through portable path APIs and forward-slash repository references.
+# The checked set is every PowerShell source file under the repository root, including scripts,
+# modules, data files, hooks, and other source locations. Git metadata is not release source.
+# The literal separator allowlist is intentionally empty.
+# This contract proves only that PowerShell source text contains no literal Windows separator.
+# It does not prove release-job portability for .json, .props, NuGet.config, or separators
+# constructed at runtime; that residual requires a founder-gated Linux run.
 $windowsPathSeparator = [char]92
-$scriptRoots = @(
-    (Join-Path $RepositoryRoot 'scripts'),
-    (Join-Path $RepositoryRoot 'tests')
-)
-$checkedScripts = @(
-    foreach ($scriptRoot in $scriptRoots) {
-        if (-not (Test-Path -LiteralPath $scriptRoot -PathType Container)) { Fail "script root '$scriptRoot' does not exist." }
-        Get-ChildItem -LiteralPath $scriptRoot -Filter '*.ps1' -File -Recurse
-    }
+$gitMetadataRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot '.git'))
+$checkedPowerShellFiles = @(
+    Get-ChildItem -LiteralPath $RepositoryRoot -File -Recurse -Force |
+        Where-Object {
+            $_.Extension -in @('.ps1', '.psm1', '.psd1') -and
+            -not [IO.Path]::GetFullPath($_.FullName).StartsWith(
+                $gitMetadataRoot + [IO.Path]::DirectorySeparatorChar,
+                [StringComparison]::OrdinalIgnoreCase)
+        }
 ) | Sort-Object -Property FullName
 
-if ($checkedScripts.Count -eq 0) { Fail 'the checked script set is empty.' }
+if ($checkedPowerShellFiles.Count -eq 0) { Fail 'the checked PowerShell source set is empty.' }
 
-foreach ($scriptFile in $checkedScripts) {
-    $scriptText = Get-Content -Raw -LiteralPath $scriptFile.FullName
+foreach ($sourceFile in $checkedPowerShellFiles) {
+    $scriptText = Get-Content -Raw -LiteralPath $sourceFile.FullName
     $separatorIndex = $scriptText.IndexOf($windowsPathSeparator)
     if ($separatorIndex -lt 0) { continue }
 
-    $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $scriptFile.FullName).Replace($windowsPathSeparator, '/')
+    $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $sourceFile.FullName).Replace($windowsPathSeparator, '/')
     $lineNumber = ($scriptText.Substring(0, $separatorIndex) -split "`n").Count
     Fail "$relativePath contains a literal Windows path separator at line $lineNumber. The portability contract allowlist is empty."
 }
@@ -106,4 +110,4 @@ while ($scriptNames.Count -gt 0) {
     }
 }
 
-Write-Output "Release script portability contract: PASS ($($checkedScripts.Count) scripts checked; $($discovered.Count) workflow/helper scripts; default paths resolve on this host; literal separator allowlist: empty)."
+Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; default paths resolve on this host; literal separator allowlist: empty). This proves only that PowerShell source text contains no literal Windows separator. It does not prove release-job portability for .json, .props, NuGet.config, or runtime-constructed separators; that residual requires a founder-gated Linux run."

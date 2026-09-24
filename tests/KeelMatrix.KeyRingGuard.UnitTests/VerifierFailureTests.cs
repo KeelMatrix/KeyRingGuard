@@ -1,7 +1,7 @@
+using System.Security.Cryptography;
 using KeelMatrix.KeyRingGuard;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
-using System.Security.Cryptography;
 
 namespace KeelMatrix.KeyRingGuard.UnitTests;
 
