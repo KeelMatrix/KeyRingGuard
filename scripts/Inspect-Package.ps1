@@ -1,13 +1,13 @@
 [CmdletBinding()]
 param(
     [string]$Version = '0.1.0',
-    [string]$PackagePath = (Join-Path $PSScriptRoot '..\artifacts\packages\KeelMatrix.KeyRingGuard.0.1.0.nupkg'),
+    [string]$PackagePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'artifacts' 'packages' 'KeelMatrix.KeyRingGuard.0.1.0.nupkg')),
     [string]$ExpectedPayloadPath = (Join-Path $PSScriptRoot 'ExpectedPackagePayload.txt')
 )
 
 $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
-$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $iconSource = Join-Path $repositoryRoot 'icon.png'
 $expected = @(Get-Content -LiteralPath $ExpectedPayloadPath | Where-Object { $_ -and -not $_.StartsWith('#') } | Sort-Object)
 
@@ -85,7 +85,7 @@ try {
     $archive.Dispose()
 }
 
-$project = (Resolve-Path (Join-Path $PSScriptRoot '..\src\KeelMatrix.KeyRingGuard\KeelMatrix.KeyRingGuard.csproj')).Path
+$project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'src' 'KeelMatrix.KeyRingGuard' 'KeelMatrix.KeyRingGuard.csproj'))
 $symbolPackage = [System.IO.Path]::ChangeExtension($package, '.snupkg')
 if (-not (Test-Path -LiteralPath $symbolPackage)) { throw "Symbol package is missing: $symbolPackage" }
 $symbolArchive = [System.IO.Compression.ZipFile]::OpenRead($symbolPackage)

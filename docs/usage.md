@@ -55,6 +55,7 @@ var result = await KeyRingVerifier.VerifyAsync(
 ```
 
 An unexpected successful cross-unprotect is reported as `UnexpectedCrossUnprotect` and fails the result.
+Any `CryptographicException`, including a derived exception type, is treated as the expected isolation rejection.
 
 ## Purpose isolation
 

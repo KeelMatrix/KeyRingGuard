@@ -2,10 +2,10 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Tag,
-    [string]$ChangelogPath = (Join-Path $PSScriptRoot '..\CHANGELOG.md'),
-    [string]$PackageVersionPath = (Join-Path $PSScriptRoot '..\Directory.Build.props'),
-    [string]$CentralPackageVersionPath = (Join-Path $PSScriptRoot '..\Directory.Packages.props'),
-    [string]$RepositoryRoot = (Join-Path $PSScriptRoot '..'),
+    [string]$ChangelogPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'CHANGELOG.md')),
+    [string]$PackageVersionPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'Directory.Build.props')),
+    [string]$CentralPackageVersionPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'Directory.Packages.props')),
+    [string]$RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')),
     [string]$ExpectedCommit = ''
 )
 

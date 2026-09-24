@@ -14,7 +14,8 @@ public static class KeyRingVerifier
     private const string AlternatePurpose = "KeelMatrix.KeyRingGuard.Verification.Alternate";
 
     /// <summary>
-    /// Verifies a scenario using one or two caller-supplied provider factories.
+    /// Verifies a scenario using one or two caller-supplied provider factories. For isolation scenarios,
+    /// any <see cref="CryptographicException"/>, including derived exception types, is treated as the expected rejection.
     /// </summary>
     /// <param name="scenario">The immutable scenario description to execute.</param>
     /// <param name="providerFactory">The primary provider factory.</param>

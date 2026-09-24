@@ -5,7 +5,20 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tracked = @(git -C $root ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate tracked files.' }
-if ($tracked -match '(^|[\\/])\.github[\\/]workflows([\\/]|$)') { throw 'Private repository workflow files are not allowed for this product round.' }
+$workflowPaths = @($tracked | Where-Object { $_ -match '(^|[\\/])\.github[\\/]workflows([\\/]|$)' })
+if ($workflowPaths.Count -gt 0) {
+    $allowedWorkflow = '.github/workflows/release.yml'
+    if ($workflowPaths.Count -ne 1 -or $workflowPaths[0].Replace('\', '/') -cne $allowedWorkflow) {
+        throw 'Only the tag-only release workflow may be tracked in this repository.'
+    }
+
+    $workflowContract = Join-Path $root 'tests' 'VerifyReleaseWorkflowContract.ps1'
+    $contractOutput = @(& pwsh -NoProfile -File $workflowContract -WorkflowPath (Join-Path $root '.github' 'workflows' 'release.yml') 2>&1)
+    $contractExitCode = $LASTEXITCODE
+    if ($contractExitCode -ne 0) {
+        throw "The tracked release workflow did not pass its tag-only contract: $($contractOutput -join [Environment]::NewLine)"
+    }
+}
 
 $authors = @(git -C $root log --format='%an%n%cn' -n 50)
 if ($authors | Where-Object { $_ -and $_ -notin @('KeelMatrix', 'Dependabot') }) {
