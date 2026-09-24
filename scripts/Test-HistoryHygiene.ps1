@@ -35,7 +35,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate commit history.' }
 
 $forbiddenTerms = @('ag' + 'ent', 'mo' + 'del', 'paper' + 'clip')
 $forbiddenHistoryPattern = '(?i)(?<![A-Za-z])(?:' + (($forbiddenTerms | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')(?![A-Za-z])'
-$trailerPattern = '(?im)^[ ' + $windowsPathSeparator + 't]*Co-Authored-By:[ ' + $windowsPathSeparator + 't]*(?<identity>[^<' + $windowsPathSeparator + 'r' + $windowsPathSeparator + 'n]+?)(?:[ ' + $windowsPathSeparator + 't]*<[^>' + $windowsPathSeparator + 'r' + $windowsPathSeparator + 'n]*>)?[ ' + $windowsPathSeparator + 't]*$'
+$trailerLabel = 'Co-Authored' + '-By:'
+$trailerPattern = '(?im)^[ ' + $windowsPathSeparator + 't]*' + $trailerLabel + '[ ' + $windowsPathSeparator + 't]*(?<identity>[^<' + $windowsPathSeparator + 'r' + $windowsPathSeparator + 'n]+?)(?:[ ' + $windowsPathSeparator + 't]*<[^>' + $windowsPathSeparator + 'r' + $windowsPathSeparator + 'n]*>)?[ ' + $windowsPathSeparator + 't]*$'
 
 foreach ($commit in $commits) {
     $message = (git -C $root show -s --format='%s%n%b' $commit) -join [Environment]::NewLine

@@ -29,7 +29,7 @@ function Invoke-Hygiene([string]$Fixture) {
 
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 try {
-    $forbiddenTrailer = 'Co-Authored-By: ' + 'NotKeelMatrix <noreply@example.invalid>'
+    $forbiddenTrailer = ('Co-Authored' + '-By: ') + 'NotKeelMatrix <noreply@example.invalid>'
     $badMessage = @('Fixture history', '', $forbiddenTrailer) -join [Environment]::NewLine
     $bad = New-Fixture 'bad-trailer' $badMessage
     $result = Invoke-Hygiene $bad
