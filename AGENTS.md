@@ -32,7 +32,7 @@ pwsh ./scripts/Invoke-LocalGate.ps1
 
 ## Validation strategy
 
-Use the smallest affected test project first. Before handoff, run the local gate once, inspect the `.nupkg` and `.snupkg`, and run the package consumer from an isolated local feed. The local gate is the release-equivalent check for this private repository; no remote workflow is required.
+Use the smallest affected test project first. Before handoff, run the local validation path once, inspect the `.nupkg` and `.snupkg`, and run the package consumer from an isolated local feed. The local validation path is the release-equivalent check for this private repository; no remote workflow is required.
 
 ## Scope boundaries
 

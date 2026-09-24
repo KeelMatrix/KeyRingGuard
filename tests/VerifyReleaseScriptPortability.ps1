@@ -16,17 +16,37 @@ if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { Fail "Release 
 # modules, data files, hooks, and other source locations. Git metadata is not release source.
 # The literal separator allowlist is intentionally empty.
 # This contract proves only that PowerShell source text contains no literal Windows separator.
-# It does not prove release-job portability for .json, .props, NuGet.config, or separators
-# constructed at runtime; that residual requires a founder-gated Linux run.
+# It does not prove release-job portability for .json, .props, NuGet.config, evaluated MSBuild
+# project/build inputs, or separators constructed at runtime. For example, the evaluated inputs
+# include Windows separators from src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj:36-38
+# and Directory.Build.targets:6-10, visible through dotnet msbuild with /pp:preprocessed.xml.
 $windowsPathSeparator = [char]92
 $gitMetadataRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot '.git'))
-$checkedPowerShellFiles = @(
-    Get-ChildItem -LiteralPath $RepositoryRoot -File -Recurse -Force |
+$checkedEntries = @(
+    Get-ChildItem -LiteralPath $RepositoryRoot -Recurse -Force |
         Where-Object {
-            $_.Extension -in @('.ps1', '.psm1', '.psd1') -and
             -not [IO.Path]::GetFullPath($_.FullName).StartsWith(
                 $gitMetadataRoot + [IO.Path]::DirectorySeparatorChar,
                 [StringComparison]::OrdinalIgnoreCase)
+        }
+)
+$symlinkEntries = @(
+    $checkedEntries | Where-Object {
+        ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    }
+)
+if ($symlinkEntries.Count -gt 0) {
+    $relativeSymlinks = @($symlinkEntries | ForEach-Object {
+        [IO.Path]::GetRelativePath($RepositoryRoot, $_.FullName).Replace($windowsPathSeparator, '/')
+    })
+    Fail "the checked source set contains symlinked or reparse-point entries: $($relativeSymlinks -join ', '). Symlink targets are not followed; the contract fails closed."
+}
+
+$checkedPowerShellFiles = @(
+    $checkedEntries |
+        Where-Object {
+            $_.PSIsContainer -eq $false -and
+            $_.Extension -in @('.ps1', '.psm1', '.psd1')
         }
 ) | Sort-Object -Property FullName
 
@@ -110,4 +130,4 @@ while ($scriptNames.Count -gt 0) {
     }
 }
 
-Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; default paths resolve on this host; literal separator allowlist: empty). This proves only that PowerShell source text contains no literal Windows separator. It does not prove release-job portability for .json, .props, NuGet.config, or runtime-constructed separators; that residual requires a founder-gated Linux run."
+Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; default paths resolve on this host; literal separator allowlist: empty). This proves only that PowerShell source text contains no literal Windows separator. It does not prove release-job portability for .json, .props, NuGet.config, evaluated MSBuild project/build inputs, or runtime-constructed separators. The evaluated-input residual includes src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj:36-38 and Directory.Build.targets:6-10 as visible through dotnet msbuild with /pp:preprocessed.xml."

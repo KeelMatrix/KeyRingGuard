@@ -1,11 +1,13 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+)
 
 $ErrorActionPreference = 'Stop'
 $windowsPathSeparator = [char]92
 $separatorPattern = '(?:/|' + [regex]::Escape($windowsPathSeparator) + ')'
 $wordBoundary = [char]92 + 'b'
-$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$root = (Resolve-Path $RepositoryRoot).Path
 $tracked = @(git -C $root ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate tracked files.' }
 $workflowPaths = @($tracked | Where-Object { $_ -match ('(^|' + $separatorPattern + ')[.]github' + $separatorPattern + 'workflows(' + $separatorPattern + '|$)') })
@@ -23,9 +25,32 @@ if ($workflowPaths.Count -gt 0) {
     }
 }
 
-$authors = @(git -C $root log --format='%an%n%cn' -n 50)
+$authors = @(git -C $root log --format='%an%n%cn')
 if ($authors | Where-Object { $_ -and $_ -notin @('KeelMatrix', 'Dependabot') }) {
     throw 'History contains a non-company author or committer.'
+}
+
+$commits = @(git -C $root log --format='%H')
+if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate commit history.' }
+
+$forbiddenTerms = @('ag' + 'ent', 'mo' + 'del', 'paper' + 'clip')
+$forbiddenHistoryPattern = '(?i)(?<![A-Za-z])(?:' + (($forbiddenTerms | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')(?![A-Za-z])'
+$trailerPattern = '(?im)^[ ' + $windowsPathSeparator + 't]*Co-Authored-By:[ ' + $windowsPathSeparator + 't]*(?<identity>[^<' + $windowsPathSeparator + 'r' + $windowsPathSeparator + 'n]+?)(?:[ ' + $windowsPathSeparator + 't]*<[^>' + $windowsPathSeparator + 'r' + $windowsPathSeparator + 'n]*>)?[ ' + $windowsPathSeparator + 't]*$'
+
+foreach ($commit in $commits) {
+    $message = (git -C $root show -s --format='%s%n%b' $commit) -join [Environment]::NewLine
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect commit $commit." }
+    $message = $message.Replace(([char]13).ToString(), '')
+
+    foreach ($trailer in [regex]::Matches($message, $trailerPattern)) {
+        if ($trailer.Groups['identity'].Value.Trim() -cne 'KeelMatrix') {
+            throw "Commit $commit contains a co-author trailer for an identity other than KeelMatrix."
+        }
+    }
+
+    if ($message -match $forbiddenHistoryPattern) {
+        throw "Commit $commit contains prohibited attribution wording."
+    }
 }
 
 foreach ($relativePath in $tracked) {

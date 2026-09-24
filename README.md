@@ -30,7 +30,7 @@ Assert.True(result.Succeeded, result.Message);
 
 ## Supported runtime and platforms
 
-The package targets `net8.0`. Windows is the locally evidenced platform for this candidate; Linux and macOS are not yet evidenced here. The repository and release workflow use the .NET SDK `10.0.401` to build the `net8.0` package, pinned in `global.json` and installed by the release workflow.
+The package targets `net8.0`. Windows is supported and tested here. Linux and macOS are supported by the package, but filesystem behavior on those platforms has not yet been verified in this repository. The repository uses the .NET SDK `10.0.401`, pinned in `global.json`, to build the package.
 
 ## Safety and privacy
 
