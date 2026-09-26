@@ -525,7 +525,11 @@ public static class KeyRingVerifier
         Task<T> task;
         try
         {
-            task = Task.Run(operation);
+            task = Task.Factory.StartNew(
+                operation,
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
             ObserveFaults(task);
         }
         catch (Exception exception)

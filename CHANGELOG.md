@@ -9,7 +9,7 @@ This changelog records consumer-facing changes to KeelMatrix.KeyRingGuard.
 ### Fixed
 
 - Quick-start documentation now lists `Microsoft.AspNetCore.DataProtection.Extensions` for the `DataProtectionProvider.Create` example and validates the exact example through the package-consumer smoke.
-- Synchronous provider and key-manager factories retain their configured operation bounds without depending on shared thread-pool capacity.
+- Synchronous provider, key-manager, and cryptographic operations retain their configured bounds without depending on shared thread-pool capacity.
 - History hygiene accepts ordinary human attribution names while retaining automation and machine-signaled attribution checks.
 
 ### Added
