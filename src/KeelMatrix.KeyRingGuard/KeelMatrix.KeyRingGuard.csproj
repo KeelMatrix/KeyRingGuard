@@ -14,7 +14,7 @@
     <PackageProjectUrl>https://github.com/KeelMatrix/KeyRingGuard#readme</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
-    <PackageIcon Condition="Exists('$(MSBuildProjectDirectory)\..\..\icon.png')">icon.png</PackageIcon>
+    <PackageIcon Condition="Exists('$(MSBuildProjectDirectory)/../../icon.png')">icon.png</PackageIcon>
     <PackageReleaseNotes>Provider-neutral continuity and isolation verification for ASP.NET Core Data Protection.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
@@ -33,9 +33,9 @@
     <AdditionalFiles Include="PublicAPI.Shipped.txt" />
     <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
     <None Update="README.md" Pack="true" PackagePath="README.md" Visible="false" />
-    <None Include="$(MSBuildProjectDirectory)\..\..\LICENSE" Pack="true" PackagePath="" Visible="false" />
-    <None Include="$(MSBuildProjectDirectory)\..\..\icon.png"
-          Condition="Exists('$(MSBuildProjectDirectory)\..\..\icon.png')"
+    <None Include="$(MSBuildProjectDirectory)/../../LICENSE" Pack="true" PackagePath="" Visible="false" />
+    <None Include="$(MSBuildProjectDirectory)/../../icon.png"
+          Condition="Exists('$(MSBuildProjectDirectory)/../../icon.png')"
           Pack="true"
           PackagePath="icon.png"
           Visible="false" />

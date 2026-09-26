@@ -15,11 +15,9 @@ if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { Fail "Release 
 # The checked set is every PowerShell source file under the repository root, including scripts,
 # modules, data files, hooks, and other source locations. Git metadata is not release source.
 # The literal separator allowlist is intentionally empty.
-# This contract proves only that PowerShell source text contains no literal Windows separator.
-# It does not prove release-job portability for .json, .props, NuGet.config, evaluated MSBuild
-# project/build inputs, or separators constructed at runtime. For example, the evaluated inputs
-# include Windows separators from src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj:36-38
-# and Directory.Build.targets:6-10, visible through dotnet msbuild with /pp:preprocessed.xml.
+# This contract proves that PowerShell source text and the pack-sensitive MSBuild inputs use
+# portable path separators. It does not prove release-job portability for .json, .props,
+# NuGet.config, or separators constructed at runtime.
 $windowsPathSeparator = [char]92
 $gitMetadataRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot '.git'))
 $checkedEntries = @(
@@ -60,6 +58,23 @@ foreach ($sourceFile in $checkedPowerShellFiles) {
     $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $sourceFile.FullName).Replace($windowsPathSeparator, '/')
     $lineNumber = ($scriptText.Substring(0, $separatorIndex) -split "`n").Count
     Fail "$relativePath contains a literal Windows path separator at line $lineNumber. The portability contract allowlist is empty."
+}
+
+$packInputFiles = @(
+    (Join-Path $RepositoryRoot 'src' 'KeelMatrix.KeyRingGuard' 'KeelMatrix.KeyRingGuard.csproj')
+    (Join-Path $RepositoryRoot 'Directory.Build.targets')
+)
+foreach ($packInputFile in $packInputFiles) {
+    if (-not (Test-Path -LiteralPath $packInputFile -PathType Leaf)) { Fail "pack input '$packInputFile' does not exist." }
+    $packInputLines = Get-Content -LiteralPath $packInputFile | Where-Object {
+        $_ -match '(?i)(PackageIcon|None Include|_ForbiddenPackageInput Include)'
+    }
+    foreach ($packInputLine in $packInputLines) {
+        if ($packInputLine.IndexOf($windowsPathSeparator) -ge 0) {
+            $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $packInputFile).Replace($windowsPathSeparator, '/')
+            Fail "$relativePath contains a Windows-only pack input path: $($packInputLine.Trim())"
+        }
+    }
 }
 
 $workflowText = Get-Content -Raw -LiteralPath $WorkflowPath
@@ -133,4 +148,4 @@ while ($scriptNames.Count -gt 0) {
     }
 }
 
-Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; defaults use repository-derived path shape, RepositoryRoot containers resolve on this host, and produced artifact leaf defaults need not exist; literal separator allowlist: empty). This proves only that PowerShell source text contains no literal Windows separator. It does not prove release-job portability for .json, .props, NuGet.config, evaluated MSBuild project/build inputs, or runtime-constructed separators. The evaluated-input residual includes src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj:36-38 and Directory.Build.targets:6-10 as visible through dotnet msbuild with /pp:preprocessed.xml."
+Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; pack-sensitive MSBuild inputs checked; defaults use repository-derived path shape, RepositoryRoot containers resolve on this host, and produced artifact leaf defaults need not exist; literal separator allowlist: empty)."

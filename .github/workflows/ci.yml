@@ -42,6 +42,40 @@ jobs:
       - name: Verify formatting
         run: dotnet format KeelMatrix.KeyRingGuard.sln --no-restore --verify-no-changes
 
+      - name: Verify changelog contract
+        shell: pwsh
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: pwsh -NoProfile -File scripts/Test-ChangelogContract.ps1 -Tag v0.1.0 -ExpectedCommit $env:EXPECTED_COMMIT
+
+      - name: Verify release workflow contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyReleaseWorkflowContract.ps1
+
+      - name: Verify CI workflow contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyCiWorkflowContract.ps1
+
+      - name: Verify vulnerability audit contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyVulnerabilityAuditContract.ps1
+
+      - name: Verify release script portability
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyReleaseScriptPortability.ps1
+
+      - name: Verify history hygiene contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyHistoryHygieneContract.ps1
+
+      - name: Verify history and workspace hygiene
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/Test-HistoryHygiene.ps1
+
+      - name: Run dependency vulnerability audit
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/Invoke-VulnerabilityAudit.ps1
+
       - name: Build Release
         run: dotnet build KeelMatrix.KeyRingGuard.sln --configuration Release --no-restore
 
@@ -50,6 +84,11 @@ jobs:
 
       - name: Pack package and symbols
         run: dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg --output ./artifacts/packages
+
+      - name: Inspect package contents and icon
+        if: hashFiles('icon.png') != ''
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/Inspect-Package.ps1 -Version 0.1.0 -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.0.1.0.nupkg
 
       - name: Package consumer smoke
         shell: pwsh

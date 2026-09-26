@@ -12,7 +12,7 @@ function Invoke-Contract([string]$Root, [string]$Tag) {
     [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine).Trim() }
 }
 
-function Write-Fixture([string]$Root, [string]$Heading, [string]$Version = '1.2.3', [string]$CentralVersion = '1.2.3') {
+function Write-Fixture([string]$Root, [string]$Heading, [string]$Version = '0.1.0', [string]$CentralVersion = '0.1.0') {
     New-Item -ItemType Directory -Force -Path $Root | Out-Null
     Set-Content -LiteralPath (Join-Path $Root 'Directory.Build.props') -Value "<Project><PropertyGroup><Version>$Version</Version></PropertyGroup></Project>" -NoNewline
     $centralProps = '<Project><ItemGroup><PackageVersion Include="KeelMatrix.KeyRingGuard" Version="' + $CentralVersion + '" /></ItemGroup></Project>'
@@ -23,18 +23,28 @@ function Write-Fixture([string]$Root, [string]$Heading, [string]$Version = '1.2.
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 try {
     $planned = Join-Path $scratch 'planned'
-    Write-Fixture $planned '## [1.2.3] - Planned (not yet published)'
-    $result = Invoke-Contract $planned 'v1.2.3'
+    Write-Fixture $planned '## [0.1.0] - Planned (not yet published)'
+    $result = Invoke-Contract $planned 'v0.1.0'
     if ($result.ExitCode -eq 0) { throw 'A planned release heading must fail.' }
 
     $finalized = Join-Path $scratch 'finalized'
-    Write-Fixture $finalized "## [1.2.3] - $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd'))"
-    $result = Invoke-Contract $finalized 'v1.2.3'
+    Write-Fixture $finalized "## [0.1.0] - $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd'))`n`n### Added`n`n- Provides the documented continuity verification path."
+    $result = Invoke-Contract $finalized 'v0.1.0'
     if ($result.ExitCode -ne 0) { throw "A finalized release heading should pass: $($result.Output)" }
 
+    $nonAdded = Join-Path $scratch 'non-added'
+    Write-Fixture $nonAdded "## [0.1.0] - $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd'))`n`n### Fixed`n`n- Corrected an unreleased implementation detail."
+    $result = Invoke-Contract $nonAdded 'v0.1.0'
+    if ($result.ExitCode -eq 0) { throw 'A first release with a non-Added section must fail.' }
+
+    $remediation = Join-Path $scratch 'remediation'
+    Write-Fixture $remediation "## [0.1.0] - $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd'))`n`n### Added`n`n- The package now verifies continuity."
+    $result = Invoke-Contract $remediation 'v0.1.0'
+    if ($result.ExitCode -eq 0) { throw 'A first-release remediation marker must fail.' }
+
     $mismatch = Join-Path $scratch 'mismatch'
-    Write-Fixture $mismatch '## [1.2.3] - 2026-09-24' -CentralVersion '1.2.4'
-    $result = Invoke-Contract $mismatch 'v1.2.3'
+    Write-Fixture $mismatch "## [0.1.0] - 2026-09-24`n`n### Added`n`n- Provides the documented continuity verification path." -CentralVersion '0.1.1'
+    $result = Invoke-Contract $mismatch 'v0.1.0'
     if ($result.ExitCode -eq 0) { throw 'A central package version mismatch must fail.' }
 
 Write-Output 'Changelog contract: PASS (planned, finalized, and mismatch cases are fail-closed).'

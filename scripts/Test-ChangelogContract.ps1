@@ -89,4 +89,48 @@ if (-not [datetime]::TryParseExact($dateMatch.Groups['date'].Value, 'yyyy-MM-dd'
 }
 if ($releaseDate.Date -gt [datetime]::UtcNow.Date) { Fail "release date '$($dateMatch.Groups['date'].Value)' is later than the current UTC date." }
 
+$sectionEnd = $lines.Count
+for ($index = $target.Index + 1; $index -lt $lines.Count; $index++) {
+    $heading = [regex]::Match($lines[$index], $headingPattern)
+    if ($heading.Success -and $heading.Groups['marks'].Value.Length -le $target.Level) {
+        $sectionEnd = $index
+        break
+    }
+}
+
+$releaseText = ($lines[$target.Index..($sectionEnd - 1)] -join [Environment]::NewLine)
+if ($releaseVersion -ceq '0.1.0') {
+    $directSections = @()
+    for ($index = $target.Index + 1; $index -lt $sectionEnd; $index++) {
+        $heading = [regex]::Match($lines[$index], $headingPattern)
+        if ($heading.Success -and $heading.Groups['marks'].Value.Length -eq ($target.Level + 1)) {
+            $directSections += $heading.Groups['title'].Value.Trim()
+        }
+    }
+
+    if ($directSections.Count -ne 1 -or $directSections[0] -cne 'Added') {
+        Fail "first release '$releaseVersion' must contain exactly one direct 'Added' section; found: $($directSections -join ', ')."
+    }
+
+    $remediationPatterns = @(
+        ($wordBoundary + 'now' + $wordBoundary)
+        ($wordBoundary + 'no' + $whitespace + '+' + 'longer' + $wordBoundary)
+        ($wordBoundary + 'previously' + $wordBoundary)
+        ($wordBoundary + 'formerly' + $wordBoundary)
+        ($wordBoundary + 'used' + $whitespace + '+' + 'to' + $wordBoundary)
+        ($wordBoundary + 'fixed' + $wordBoundary)
+        ($wordBoundary + 'fixes' + $wordBoundary)
+        ($wordBoundary + 'corrected' + $wordBoundary)
+        ($wordBoundary + 'resolved' + $wordBoundary)
+        ($wordBoundary + 'addressed' + $wordBoundary)
+        ($wordBoundary + 'this' + $whitespace + '+' + 'removes' + $wordBoundary)
+        ($wordBoundary + 'this' + $whitespace + '+' + 'fixes' + $wordBoundary)
+        ($wordBoundary + 'changed' + $whitespace + '+' + 'from' + $wordBoundary)
+    )
+    foreach ($pattern in $remediationPatterns) {
+        $match = [regex]::Match($releaseText, ('(?i)' + $pattern))
+        if ($match.Success) { Fail "first release '$releaseVersion' contains unpublished remediation wording '$($match.Value)'." }
+    }
+}
+
 Write-Output "Changelog contract passed for $Tag ($releaseVersion)."

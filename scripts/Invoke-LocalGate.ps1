@@ -26,6 +26,7 @@ Invoke-GateStep 'Release build and public API analyzers' { dotnet build KeelMatr
 Invoke-GateStep 'Tests' { dotnet test KeelMatrix.KeyRingGuard.sln --configuration Release --no-build }
 Invoke-GateStep 'Changelog contract tests' { & (Join-Path $root 'tests' 'VerifyChangelogContract.ps1') }
 Invoke-GateStep 'Release workflow contract' { & (Join-Path $root 'tests' 'VerifyReleaseWorkflowContract.ps1') }
+Invoke-GateStep 'CI workflow contract' { & (Join-Path $root 'tests' 'VerifyCiWorkflowContract.ps1') }
 Invoke-GateStep 'Vulnerability audit contract tests' { & (Join-Path $root 'tests' 'VerifyVulnerabilityAuditContract.ps1') }
 Invoke-GateStep 'Formatting' { dotnet format KeelMatrix.KeyRingGuard.sln --no-restore --verify-no-changes }
 Invoke-GateStep 'Release script portability contract' { & (Join-Path $root 'tests' 'VerifyReleaseScriptPortability.ps1') }
