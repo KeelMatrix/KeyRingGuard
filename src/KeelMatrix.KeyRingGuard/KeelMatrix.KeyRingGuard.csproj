@@ -14,7 +14,7 @@
     <PackageProjectUrl>https://github.com/KeelMatrix/KeyRingGuard#readme</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
-    <PackageIcon>icon.png</PackageIcon>
+    <PackageIcon Condition="Exists('$(MSBuildProjectDirectory)\..\..\icon.png')">icon.png</PackageIcon>
     <PackageReleaseNotes>Provider-neutral continuity and isolation verification for ASP.NET Core Data Protection.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
