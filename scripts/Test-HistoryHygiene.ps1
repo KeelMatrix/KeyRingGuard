@@ -12,9 +12,13 @@ $tracked = @(git -C $root ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate tracked files.' }
 $workflowPaths = @($tracked | Where-Object { $_ -match ('(^|' + $separatorPattern + ')[.]github' + $separatorPattern + 'workflows(' + $separatorPattern + '|$)') })
 if ($workflowPaths.Count -gt 0) {
-    $allowedWorkflow = '.github/workflows/release.yml'
-    if ($workflowPaths.Count -ne 1 -or $workflowPaths[0].Replace($windowsPathSeparator, '/') -cne $allowedWorkflow) {
-        throw 'Only the tag-only release workflow may be tracked in this repository.'
+    $allowedWorkflows = @(
+        '.github/workflows/ci.yml'
+        '.github/workflows/release.yml'
+    )
+    $normalizedWorkflowPaths = @($workflowPaths | ForEach-Object { $_.Replace($windowsPathSeparator, '/') } | Sort-Object)
+    if (($normalizedWorkflowPaths -join "`n") -cne ($allowedWorkflows | Sort-Object -CaseSensitive | Join-String -Separator "`n")) {
+        throw 'Only the cross-platform CI matrix and tag-only release workflows may be tracked in this repository.'
     }
 
     $workflowContract = Join-Path $root 'tests' 'VerifyReleaseWorkflowContract.ps1'

@@ -37,10 +37,18 @@ public sealed class KeyRingProviderFactory
     {
         ArgumentNullException.ThrowIfNull(createProvider);
 
-        _createProvider = cancellationToken => Task.Run(() => createProvider(cancellationToken));
+        _createProvider = cancellationToken => Task.Factory.StartNew(
+            () => createProvider(cancellationToken),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
         _createKeyManager = createKeyManager is null
             ? null
-            : cancellationToken => Task.Run(() => createKeyManager(cancellationToken));
+            : cancellationToken => Task.Factory.StartNew(
+                () => createKeyManager(cancellationToken),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
         Timeout = ValidateTimeout(timeout);
     }
 
