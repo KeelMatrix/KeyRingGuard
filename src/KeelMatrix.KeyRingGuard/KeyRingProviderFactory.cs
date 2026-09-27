@@ -43,7 +43,8 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes a synchronous provider and cancellation-aware rotation operation.
-    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
+    /// The verifier takes the opaque key-ID snapshot and invokes the rotation callback in one
+    /// bounded scheduled operation, with no verifier work or second scheduler admission between them.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
@@ -79,7 +80,8 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes a synchronous provider, cancellation-aware rotation operation, and backing-store boundary identity.
-    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
+    /// The verifier takes the opaque key-ID snapshot and invokes the rotation callback in one
+    /// bounded scheduled operation, with no verifier work or second scheduler admission between them.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
@@ -144,7 +146,8 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes an asynchronous provider and cancellation-aware rotation operation.
-    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
+    /// The verifier takes the opaque key-ID snapshot and invokes the rotation callback in one
+    /// bounded scheduled operation, with no verifier work or second scheduler admission between them.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
@@ -180,7 +183,8 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes an asynchronous provider, cancellation-aware rotation operation, and backing-store boundary identity.
-    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
+    /// The verifier takes the opaque key-ID snapshot and invokes the rotation callback in one
+    /// bounded scheduled operation, with no verifier work or second scheduler admission between them.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
@@ -242,15 +246,21 @@ public sealed class KeyRingProviderFactory
 
     internal bool HasNewKeyFactory => _createNewKey is not null;
 
-    internal Task<IKey> CreateNewKeyAsync(
+    internal Task<(HashSet<Guid> ExistingKeyIds, IKey NewKey)> CreateNewKeyWithSnapshotAsync(
         IKeyManager manager,
         DateTimeOffset activationDate,
         DateTimeOffset expirationDate,
+        Func<IKeyManager, HashSet<Guid>> snapshotKeyIds,
         CancellationToken cancellationToken) =>
         _createNewKey is null
-            ? Task.FromException<IKey>(new InvalidOperationException())
+            ? Task.FromException<(HashSet<Guid> ExistingKeyIds, IKey NewKey)>(new InvalidOperationException())
             : KeyRingOperationScheduler.RunAsync(
-                () => _createNewKey(manager, activationDate, expirationDate, cancellationToken),
+                async () =>
+                {
+                    var existingKeyIds = snapshotKeyIds(manager);
+                    var newKey = await _createNewKey(manager, activationDate, expirationDate, cancellationToken).ConfigureAwait(false);
+                    return (existingKeyIds, newKey);
+                },
                 cancellationToken);
 
     private static TimeSpan ValidateTimeout(TimeSpan timeout)

@@ -675,24 +675,6 @@ public static class KeyRingVerifier
             return manager.Failure;
         }
 
-        var existingKeyIds = await ExecuteBoundedAsync(
-            () => SnapshotKeyIds(manager.Manager!),
-            providerFactory.Timeout,
-            providerScope,
-            cancellationToken).ConfigureAwait(false);
-        if (existingKeyIds.TimedOut)
-        {
-            return Failure(scenario, KeyRingFailureKind.Timeout, "Rotation key observation timed out before the configured bound.");
-        }
-        if (existingKeyIds.Canceled)
-        {
-            return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
-        }
-        if (existingKeyIds.Exception is not null)
-        {
-            return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager could not expose its existing keys.");
-        }
-
         var rotationStart = DateTimeOffset.UtcNow;
         var activationDate = rotationStart.AddSeconds(-1);
         var expirationDate = rotationStart.AddDays(1);
@@ -701,10 +683,11 @@ public static class KeyRingVerifier
             cancellationToken,
             rotationTimeoutSource.Token);
         var rotationResult = await ExecuteAsync(
-            () => providerFactory.CreateNewKeyAsync(
+            () => providerFactory.CreateNewKeyWithSnapshotAsync(
                 manager.Manager!,
                 activationDate,
                 expirationDate,
+                SnapshotKeyIds,
                 rotationLinkedSource.Token),
             providerFactory.Timeout,
             providerScope,
@@ -725,14 +708,20 @@ public static class KeyRingVerifier
             return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager could not create a new key.");
         }
 
-        if (rotationResult.Value is null)
+        if (rotationResult.Value.ExistingKeyIds is null)
+        {
+            return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager could not expose its existing keys.");
+        }
+
+        if (rotationResult.Value.NewKey is null)
         {
             return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager did not return a new key.");
         }
 
-        var newKey = rotationResult.Value;
+        var existingKeyIds = rotationResult.Value.ExistingKeyIds;
+        var newKey = rotationResult.Value.NewKey;
         var observedKey = await ExecuteBoundedAsync(
-            () => ObserveNewActiveKey(manager.Manager!, newKey!, existingKeyIds.Value!, DateTimeOffset.UtcNow),
+            () => ObserveNewActiveKey(manager.Manager!, newKey, existingKeyIds, DateTimeOffset.UtcNow),
             providerFactory.Timeout,
             providerScope,
             cancellationToken).ConfigureAwait(false);

@@ -534,6 +534,29 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
+    public async Task RotationSnapshotsAndInvokesCallbackWithinOneScheduledOperation()
+    {
+        var manager = new ThreadScopedRotationKeyManager();
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, IDataProtectionProvider>)(_ => new FakeProvider(
+                protect: payload => manager.CreatedKey is { } key
+                    ? CreateProtectedPayload(payload, key.KeyId)
+                    : payload.ToArray(),
+                unprotect: UnprotectPayload)),
+            TimeSpan.FromSeconds(1),
+            _ => manager,
+            static (keyManager, activationDate, expirationDate, _) =>
+            {
+                Assert.True(RotationThreadProbe.SnapshotSeenOnCurrentThread);
+                return Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate));
+            });
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.True(result.Succeeded, result.Message);
+    }
+
+    [Fact]
     public async Task AsyncRotationCallbackHonorsCallerCancellation()
     {
         using var cancellation = new CancellationTokenSource();
@@ -661,6 +684,56 @@ public sealed class VerifierFailureTests
         Assert.DoesNotContain(Convert.ToBase64String(protectedPayload!), result.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("master material", result.Message, StringComparison.Ordinal);
     }
+
+    private static byte[] CreateProtectedPayload(byte[] payload, Guid keyId)
+    {
+        var protectedPayload = new byte[20 + payload.Length];
+        protectedPayload[0] = 0x09;
+        protectedPayload[1] = 0xF0;
+        protectedPayload[2] = 0xC9;
+        protectedPayload[3] = 0xF0;
+        keyId.TryWriteBytes(protectedPayload.AsSpan(4, 16));
+        payload.CopyTo(protectedPayload.AsSpan(20));
+        return protectedPayload;
+    }
+
+    private static byte[] UnprotectPayload(byte[] protectedPayload) =>
+        protectedPayload.Length >= 20
+            && protectedPayload[0] == 0x09
+            && protectedPayload[1] == 0xF0
+            && protectedPayload[2] == 0xC9
+            && protectedPayload[3] == 0xF0
+            ? protectedPayload[20..]
+            : protectedPayload.ToArray();
+}
+
+internal static class RotationThreadProbe
+{
+    [ThreadStatic]
+    internal static bool SnapshotSeenOnCurrentThread;
+}
+
+internal sealed class ThreadScopedRotationKeyManager : IKeyManager
+{
+    public TestKey? CreatedKey { get; private set; }
+
+    public IKey CreateNewKey(DateTimeOffset activationDate, DateTimeOffset expirationDate)
+    {
+        CreatedKey = new TestKey(Guid.NewGuid(), activationDate, expirationDate);
+        return CreatedKey;
+    }
+
+    public IReadOnlyCollection<IKey> GetAllKeys()
+    {
+        RotationThreadProbe.SnapshotSeenOnCurrentThread = true;
+        return CreatedKey is null ? [] : [CreatedKey];
+    }
+
+    public CancellationToken GetCacheExpirationToken() => CancellationToken.None;
+
+    public void RevokeKey(Guid keyId, string? reason) => throw new NotSupportedException();
+
+    public void RevokeAllKeys(DateTimeOffset revocationDate, string? reason) => throw new NotSupportedException();
 }
 
 internal sealed class SlowKeyManager : IKeyManager
