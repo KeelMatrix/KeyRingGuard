@@ -6,19 +6,23 @@ internal sealed class FakeProvider : IDataProtectionProvider, IDisposable
 {
     private readonly Func<byte[], byte[]> _unprotect;
     private readonly Func<byte[], byte[]>? _protect;
+    private readonly Func<string, IDataProtector>? _createProtector;
     private readonly Action? _dispose;
 
     public FakeProvider(
         Func<byte[], byte[]>? protect = null,
         Func<byte[], byte[]>? unprotect = null,
-        Action? dispose = null)
+        Action? dispose = null,
+        Func<string, IDataProtector>? createProtector = null)
     {
         _protect = protect;
         _unprotect = unprotect ?? (payload => payload);
         _dispose = dispose;
+        _createProtector = createProtector;
     }
 
-    public IDataProtector CreateProtector(string purpose) => new FakeProtector(_protect, _unprotect);
+    public IDataProtector CreateProtector(string purpose) =>
+        _createProtector?.Invoke(purpose) ?? new FakeProtector(_protect, _unprotect);
 
     public void Dispose() => _dispose?.Invoke();
 }

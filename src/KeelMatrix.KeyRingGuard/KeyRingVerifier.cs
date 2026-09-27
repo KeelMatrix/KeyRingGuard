@@ -808,18 +808,25 @@ public static class KeyRingVerifier
     private static RotationObservation ObserveNewActiveKey(IKeyManager manager, IKey newKey, DateTimeOffset now)
     {
         var keyId = newKey.KeyId;
-        var active = newKey.ActivationDate <= now && now < newKey.ExpirationDate;
-        var observed = false;
+        IKey? observedKey = null;
         foreach (var key in manager.GetAllKeys())
         {
             if (key is not null && key.KeyId == keyId)
             {
-                observed = true;
-                break;
+                if (observedKey is not null)
+                {
+                    return new RotationObservation(keyId, false);
+                }
+
+                observedKey = key;
             }
         }
 
-        return new RotationObservation(keyId, observed && active);
+        var active = observedKey is not null
+            && !observedKey.IsRevoked
+            && observedKey.ActivationDate <= now
+            && now < observedKey.ExpirationDate;
+        return new RotationObservation(keyId, active);
     }
 
     private static bool PayloadUsesKey(byte[] protectedPayload, Guid keyId)
@@ -1063,6 +1070,10 @@ public static class KeyRingVerifier
         {
             return new(default, null, false, true);
         }
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
+        {
+            return new(default, null, true, false);
+        }
         catch (Exception exception)
         {
             return new(default, exception, false, false);
@@ -1108,6 +1119,10 @@ public static class KeyRingVerifier
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return new(default, null, false, true);
+        }
+        catch (OperationCanceledException) when (startCancellationToken.IsCancellationRequested)
+        {
+            return new(default, null, true, false);
         }
         catch (Exception exception)
         {

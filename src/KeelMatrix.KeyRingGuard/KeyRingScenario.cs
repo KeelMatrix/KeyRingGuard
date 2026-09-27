@@ -59,7 +59,7 @@ public sealed class KeyRingScenario
         isolationExpectation: IsolationExpectation.RejectCrossUnprotect);
 
     /// <summary>
-    /// Verifies an observed active key transition while preserving payloads from before and after rotation.
+    /// Verifies exactly one matching active, non-revoked observed key transition while preserving payloads from before and after rotation.
     /// </summary>
     public static KeyRingScenario RotationContinuity { get; } = new(
         "Rotation continuity",

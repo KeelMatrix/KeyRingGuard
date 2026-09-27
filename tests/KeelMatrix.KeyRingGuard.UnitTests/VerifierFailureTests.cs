@@ -321,6 +321,44 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
+    public async Task QueuedSynchronousProtectTimeoutIsReportedAsTimeout()
+    {
+        using var release = new ManualResetEventSlim();
+        var started = 0;
+        Task[] blockers = [];
+        var blockerFactory = new KeyRingProviderFactory(
+            _ =>
+            {
+                Interlocked.Increment(ref started);
+                release.Wait(CancellationToken.None);
+                return new FakeProvider();
+            },
+            TimeSpan.FromSeconds(5));
+        var provider = new FakeProvider(
+            createProtector: _ =>
+            {
+                blockers = Enumerable.Range(0, 64)
+                    .Select(_ => KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, blockerFactory))
+                    .ToArray();
+                Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 31, TimeSpan.FromSeconds(5)));
+                return new FakeProtector(null, payload => payload);
+            });
+        var targetFactory = new KeyRingProviderFactory(_ => provider, TimeSpan.FromMilliseconds(40));
+
+        try
+        {
+            var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, targetFactory);
+
+            Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAll(blockers);
+        }
+    }
+
+    [Fact]
     public async Task SynchronousUnprotectTimeoutIsBounded()
     {
         var factoryCalls = 0;
@@ -433,6 +471,29 @@ public sealed class VerifierFailureTests
             (Func<CancellationToken, IKeyManager>)(_ => new NullKeyManager()),
             static (manager, activationDate, expirationDate, cancellationToken) =>
                 Task.FromResult(manager.CreateNewKey(activationDate, expirationDate)));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("duplicate")]
+    [InlineData("expired")]
+    [InlineData("not-yet-active")]
+    [InlineData("revoked")]
+    [InlineData("mismatched")]
+    public async Task RotationRejectsUnsafeObservedKeyMetadata(string caseName)
+    {
+        var manager = new MetadataKeyManager(caseName);
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, IDataProtectionProvider>)(_ => new FakeProvider()),
+            TimeSpan.FromSeconds(1),
+            _ => manager,
+            static (keyManager, activationDate, expirationDate, cancellationToken) =>
+                Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate)));
 
         var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
 
@@ -570,14 +631,53 @@ internal sealed class ThrowingKeyCollection : IReadOnlyCollection<IKey>
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+internal sealed class MetadataKeyManager : IKeyManager
+{
+    private readonly string _caseName;
+    private TestKey? _createdKey;
+
+    public MetadataKeyManager(string caseName) => _caseName = caseName;
+
+    public IKey CreateNewKey(DateTimeOffset activationDate, DateTimeOffset expirationDate)
+    {
+        _createdKey = new TestKey(Guid.NewGuid(), activationDate, expirationDate);
+        return _createdKey;
+    }
+
+    public IReadOnlyCollection<IKey> GetAllKeys()
+    {
+        if (_createdKey is null)
+        {
+            return [];
+        }
+
+        return _caseName switch
+        {
+            "duplicate" => [_createdKey, _createdKey],
+            "expired" => [new TestKey(_createdKey.KeyId, _createdKey.ActivationDate.AddDays(-2), _createdKey.ActivationDate.AddDays(-1))],
+            "not-yet-active" => [new TestKey(_createdKey.KeyId, _createdKey.ExpirationDate.AddDays(1), _createdKey.ExpirationDate.AddDays(2))],
+            "revoked" => [new TestKey(_createdKey.KeyId, _createdKey.ActivationDate, _createdKey.ExpirationDate, true)],
+            "mismatched" => [new TestKey(Guid.NewGuid(), _createdKey.ActivationDate, _createdKey.ExpirationDate)],
+            _ => []
+        };
+    }
+
+    public CancellationToken GetCacheExpirationToken() => CancellationToken.None;
+
+    public void RevokeKey(Guid keyId, string? reason) => throw new NotSupportedException();
+
+    public void RevokeAllKeys(DateTimeOffset revocationDate, string? reason) => throw new NotSupportedException();
+}
+
 internal sealed class TestKey : IKey
 {
-    public TestKey(Guid keyId, DateTimeOffset activationDate, DateTimeOffset expirationDate)
+    public TestKey(Guid keyId, DateTimeOffset activationDate, DateTimeOffset expirationDate, bool isRevoked = false)
     {
         KeyId = keyId;
         CreationDate = activationDate;
         ActivationDate = activationDate;
         ExpirationDate = expirationDate;
+        IsRevoked = isRevoked;
     }
 
     public DateTimeOffset ActivationDate { get; }
@@ -586,7 +686,7 @@ internal sealed class TestKey : IKey
 
     public DateTimeOffset ExpirationDate { get; }
 
-    public bool IsRevoked => false;
+    public bool IsRevoked { get; }
 
     public Guid KeyId { get; }
 
