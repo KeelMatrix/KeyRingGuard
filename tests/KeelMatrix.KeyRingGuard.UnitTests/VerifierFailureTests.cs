@@ -235,6 +235,92 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
+    public async Task TimedOutProtectDoesNotRaceProviderDisposal()
+    {
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var disposed = 0;
+        var disposedBeforeLateProtect = 0;
+        var provider = new FakeProvider(
+            protect: value =>
+            {
+                started.Set();
+                release.Wait();
+                if (Volatile.Read(ref disposed) != 0)
+                {
+                    Interlocked.Increment(ref disposedBeforeLateProtect);
+                }
+
+                return value.ToArray();
+            },
+            dispose: () => Interlocked.Increment(ref disposed));
+        var factory = new KeyRingProviderFactory(_ => provider, TimeSpan.FromMilliseconds(40));
+
+        try
+        {
+            var verification = KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, factory);
+            Assert.True(started.Wait(TimeSpan.FromSeconds(1)));
+
+            var result = await verification;
+
+            Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+            Assert.Equal(0, Volatile.Read(ref disposed));
+
+            release.Set();
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref disposed) == 1, TimeSpan.FromSeconds(1)));
+            Assert.Equal(0, Volatile.Read(ref disposedBeforeLateProtect));
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task CanceledQueuedSynchronousFactoryDoesNotRunAfterCapacityIsReleased()
+    {
+        using var release = new ManualResetEventSlim();
+        var started = 0;
+        var lateInvocations = 0;
+        var blockingFactories = Enumerable.Range(0, 32)
+            .Select(_ => new KeyRingProviderFactory(
+                _ =>
+                {
+                    Interlocked.Increment(ref started);
+                    release.Wait(CancellationToken.None);
+                    return new FakeProvider();
+                },
+                TimeSpan.FromSeconds(5)))
+            .ToArray();
+        var running = blockingFactories
+            .Select(factory => KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, factory))
+            .ToArray();
+        var queuedFactory = new KeyRingProviderFactory(
+            _ =>
+            {
+                Interlocked.Increment(ref lateInvocations);
+                return new FakeProvider();
+            },
+            TimeSpan.FromMilliseconds(40));
+
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 32, TimeSpan.FromSeconds(5)));
+            var queuedResult = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, queuedFactory);
+
+            Assert.Equal(KeyRingFailureKind.Timeout, queuedResult.FailureKind);
+            release.Set();
+            await Task.WhenAll(running);
+            Assert.Equal(0, Volatile.Read(ref lateInvocations));
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAll(running);
+        }
+    }
+
+    [Fact]
     public async Task SynchronousUnprotectTimeoutIsBounded()
     {
         var factoryCalls = 0;

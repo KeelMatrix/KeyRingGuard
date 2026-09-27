@@ -53,7 +53,7 @@ Factories are caller-owned. KeyRingGuard does not silently replace a failed or m
 
 ## Restart continuity
 
-`RestartContinuity` creates a provider, protects a generated in-memory canary, disposes that provider, creates an independent second provider from the same factory, and checks that the second provider can unprotect the payload. A factory that returns the same live provider instance is rejected. This is the test for persistence across a process restart or deployment replacement.
+`RestartContinuity` creates a provider, protects a generated in-memory canary, creates an independent second provider from the same factory, and checks that the second provider can unprotect the payload. Providers are disposed after the scenario has no outstanding callbacks; this keeps a timed-out callback from using a provider after disposal. A factory that returns the same live provider instance is rejected. This is the test for persistence across a process restart or deployment replacement.
 
 ## Replica sharing
 
@@ -118,7 +118,7 @@ If no linked key-manager and key-creation factories are supplied, the result is 
 
 ## Provider-factory patterns
 
-The factory may be synchronous or asynchronous. The verifier passes a cancellation token to provider and key-manager factories and applies the configured per-operation timeout to provider creation, protector creation, protect, unprotect, and rotation. Synchronous callbacks run through a bounded shared scheduler so repeated hung callbacks cannot create an unbounded set of dedicated threads, but .NET cannot forcibly interrupt a synchronous callback that is already running; it may finish in the background. Late provider results are disposed when they arrive. Cancellation is cooperative for asynchronous callbacks. Use the asynchronous constructor for network-backed provider creation and honor the token in the provider setup path.
+The factory may be synchronous or asynchronous. The verifier passes a cancellation token to provider and key-manager factories and applies the configured per-operation timeout to provider creation, protector creation, protect, unprotect, and rotation. Synchronous callbacks run through a bounded shared scheduler with dedicated execution slots, so repeated hung callbacks cannot starve timeout observation or create an unbounded set of dedicated threads. .NET cannot forcibly interrupt a synchronous callback that is already running; it may finish in the background. Providers remain alive until scheduled callbacks finish, including callbacks that outlive a timeout, and late provider results are disposed when they arrive. Cancellation before scheduler admission removes queued work without invoking its callback; cancellation is otherwise cooperative for asynchronous callbacks. Use the asynchronous constructor for network-backed provider creation and honor the token in the provider setup path.
 
 Provider exceptions are categorized without copying exception text into the result. Results distinguish provider creation, protect, unprotect, unexpected cross-unprotect, timeout, cancellation, and rotation failures.
 

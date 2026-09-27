@@ -57,6 +57,8 @@ The package targets `net8.0`. The repository's filesystem integration and packag
 
 KeyRingGuard uses synthetic, ephemeral canaries only, never key material. It has no telemetry dependency and does not delete or revoke keys. A caller-supplied Data Protection provider can auto-generate keys during initialization and mutate a real shared store, even when the scenario is intended as a check. `KeyManagementOptions.AutoGenerateKeys` controls that provider behavior; use a temporary or dedicated test store by default. Only opt-in rotation explicitly requests one new key. Read [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
+Each configured timeout bounds the verifier's wait. A synchronous callback that has already started may finish in the background; KeyRingGuard keeps its provider alive until that callback completes, then disposes it. Canceled work that has not entered a scheduler slot does not invoke the callback. See the [timeout and callback guidance](docs/usage.md#provider-factory-patterns).
+
 ## Compatibility
 
 The durable public API is pre-1.0. Breaking changes are possible before the first public release, and the shipping API baseline is enforced by public API analyzers.

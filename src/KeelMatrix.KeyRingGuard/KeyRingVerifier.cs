@@ -128,6 +128,7 @@ public static class KeyRingVerifier
             first.Provider!,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (protectorResult.Failure is not null)
         {
@@ -139,13 +140,13 @@ public static class KeyRingVerifier
             protectorResult.Value!,
             canary,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (protectedResult.Failure is not null)
         {
             return protectedResult.Failure;
         }
 
-        providerScope.Release(first.Provider!);
         var second = await CreateProviderAsync(scenario, providerFactory, providerScope, cancellationToken).ConfigureAwait(false);
         if (second.Failure is not null)
         {
@@ -167,6 +168,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -208,6 +210,7 @@ public static class KeyRingVerifier
             first.Provider!,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (firstProtectorResult.Failure is not null)
         {
@@ -219,6 +222,7 @@ public static class KeyRingVerifier
             second.Provider!,
             SharedPurpose,
             secondaryProviderFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (secondProtectorResult.Failure is not null)
         {
@@ -230,6 +234,7 @@ public static class KeyRingVerifier
             firstProtectorResult.Value!,
             canary,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (firstProtectedResult.Failure is not null)
         {
@@ -241,6 +246,7 @@ public static class KeyRingVerifier
             secondProtectorResult.Value!,
             canary,
             secondaryProviderFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (secondProtectedResult.Failure is not null)
         {
@@ -254,6 +260,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             secondaryProviderFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (!firstResult.Succeeded)
         {
@@ -267,6 +274,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -304,6 +312,7 @@ public static class KeyRingVerifier
             canary,
             providerFactory.Timeout,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (control is not null)
         {
@@ -319,6 +328,7 @@ public static class KeyRingVerifier
             AlternatePurpose,
             providerFactory.Timeout,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -399,6 +409,7 @@ public static class KeyRingVerifier
             canary,
             isolationControl.PrimaryFactory.Timeout,
             isolationControl.SecondaryFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (control is not null)
         {
@@ -414,6 +425,7 @@ public static class KeyRingVerifier
             SharedPurpose,
             providerFactory.Timeout,
             secondaryProviderFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -424,6 +436,7 @@ public static class KeyRingVerifier
         byte[] canary,
         TimeSpan firstTimeout,
         TimeSpan secondTimeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         var firstProtected = await ProtectWithPurposeAsync(
@@ -432,6 +445,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             firstTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (firstProtected.Failure is not null)
         {
@@ -445,6 +459,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             secondTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (!secondResult.Succeeded)
         {
@@ -462,6 +477,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             secondTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (secondProtected.Failure is not null)
         {
@@ -475,6 +491,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             firstTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (firstResult.Succeeded)
         {
@@ -498,6 +515,7 @@ public static class KeyRingVerifier
         string secondPurpose,
         TimeSpan firstTimeout,
         TimeSpan secondTimeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         var firstProtectorResult = await CreateProtectorAsync(
@@ -505,6 +523,7 @@ public static class KeyRingVerifier
             first,
             firstPurpose,
             firstTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (firstProtectorResult.Failure is not null)
         {
@@ -516,6 +535,7 @@ public static class KeyRingVerifier
             second,
             secondPurpose,
             secondTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (secondProtectorResult.Failure is not null)
         {
@@ -527,6 +547,7 @@ public static class KeyRingVerifier
             firstProtectorResult.Value!,
             canary,
             firstTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (firstProtectedResult.Failure is not null)
         {
@@ -538,6 +559,7 @@ public static class KeyRingVerifier
             secondProtectorResult.Value!,
             canary,
             secondTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (secondProtectedResult.Failure is not null)
         {
@@ -551,6 +573,7 @@ public static class KeyRingVerifier
             canary,
             firstPurpose,
             firstTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (!firstSelfResult.Succeeded)
         {
@@ -569,6 +592,7 @@ public static class KeyRingVerifier
             canary,
             secondPurpose,
             secondTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (!secondSelfResult.Succeeded)
         {
@@ -586,6 +610,7 @@ public static class KeyRingVerifier
             firstProtectedResult.Value!,
             secondPurpose,
             secondTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (!firstCrossResult.Succeeded)
         {
@@ -598,6 +623,7 @@ public static class KeyRingVerifier
             secondProtectedResult.Value!,
             firstPurpose,
             firstTimeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -624,6 +650,7 @@ public static class KeyRingVerifier
             first.Provider!,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (protectorResult.Failure is not null)
         {
@@ -635,13 +662,14 @@ public static class KeyRingVerifier
             protectorResult.Value!,
             canary,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (protectedResult.Failure is not null)
         {
             return protectedResult.Failure;
         }
 
-        var manager = await CreateKeyManagerAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
+        var manager = await CreateKeyManagerAsync(scenario, providerFactory, providerScope, cancellationToken).ConfigureAwait(false);
         if (manager.Failure is not null)
         {
             return manager.Failure;
@@ -661,6 +689,8 @@ public static class KeyRingVerifier
                 expirationDate,
                 rotationLinkedSource.Token),
             providerFactory.Timeout,
+            providerScope,
+            rotationLinkedSource.Token,
             cancellationToken).ConfigureAwait(false);
         if (rotationResult.TimedOut)
         {
@@ -686,6 +716,7 @@ public static class KeyRingVerifier
         var observedKey = await ExecuteBoundedAsync(
             () => ObserveNewActiveKey(manager.Manager!, newKey!, DateTimeOffset.UtcNow),
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (observedKey.TimedOut)
         {
@@ -705,7 +736,6 @@ public static class KeyRingVerifier
             return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the new key was not observed as active.");
         }
 
-        providerScope.Release(first.Provider!);
         var second = await CreateProviderAsync(scenario, providerFactory, providerScope, cancellationToken).ConfigureAwait(false);
         if (second.Failure is not null)
         {
@@ -726,6 +756,7 @@ public static class KeyRingVerifier
             second.Provider!,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (postRotationProtector.Failure is not null)
         {
@@ -737,6 +768,7 @@ public static class KeyRingVerifier
             postRotationProtector.Value!,
             postRotationCanary,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (postRotationProtected.Failure is not null)
         {
@@ -755,6 +787,7 @@ public static class KeyRingVerifier
             canary,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (!oldPayloadResult.Succeeded)
         {
@@ -768,6 +801,7 @@ public static class KeyRingVerifier
             postRotationCanary,
             SharedPurpose,
             providerFactory.Timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -814,11 +848,13 @@ public static class KeyRingVerifier
         IDataProtectionProvider provider,
         string purpose,
         TimeSpan timeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         var operation = await ExecuteBoundedAsync(
             () => provider.CreateProtector(purpose),
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (operation.TimedOut)
         {
@@ -841,11 +877,13 @@ public static class KeyRingVerifier
         IDataProtector protector,
         byte[] canary,
         TimeSpan timeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         var operation = await ExecuteBoundedAsync(
             () => protector.Protect(canary),
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (operation.TimedOut)
         {
@@ -869,6 +907,7 @@ public static class KeyRingVerifier
         byte[] canary,
         string purpose,
         TimeSpan timeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         var protectorResult = await CreateProtectorAsync(
@@ -876,6 +915,7 @@ public static class KeyRingVerifier
             provider,
             purpose,
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (protectorResult.Failure is not null)
         {
@@ -887,6 +927,7 @@ public static class KeyRingVerifier
             protectorResult.Value!,
             canary,
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -897,6 +938,7 @@ public static class KeyRingVerifier
         byte[] canary,
         string purpose,
         TimeSpan timeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         var protectorResult = await CreateProtectorAsync(
@@ -904,6 +946,7 @@ public static class KeyRingVerifier
             provider,
             purpose,
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (protectorResult.Failure is not null)
         {
@@ -915,6 +958,7 @@ public static class KeyRingVerifier
         var operation = await ExecuteBoundedAsync(
             () => protectorResult.Value!.Unprotect(protectedPayload),
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (operation.TimedOut)
         {
@@ -940,6 +984,7 @@ public static class KeyRingVerifier
         byte[] protectedPayload,
         string purpose,
         TimeSpan timeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         var protectorResult = await CreateProtectorAsync(
@@ -947,6 +992,7 @@ public static class KeyRingVerifier
             provider,
             purpose,
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (protectorResult.Failure is not null)
         {
@@ -958,6 +1004,7 @@ public static class KeyRingVerifier
         var operation = await ExecuteBoundedAsync(
             () => protectorResult.Value!.Unprotect(protectedPayload),
             timeout,
+            providerScope,
             cancellationToken).ConfigureAwait(false);
         if (operation.TimedOut)
         {
@@ -982,6 +1029,7 @@ public static class KeyRingVerifier
     private static async Task<BoundedOperation<T>> ExecuteBoundedAsync<T>(
         Func<T> operation,
         TimeSpan timeout,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -994,7 +1042,7 @@ public static class KeyRingVerifier
         Task<T> task;
         try
         {
-            task = KeyRingOperationScheduler.Run(operation, linkedSource.Token);
+            task = RunScoped(operation, providerScope, linkedSource.Token);
             ObserveFaults(task);
         }
         catch (Exception exception)
@@ -1024,6 +1072,8 @@ public static class KeyRingVerifier
     private static async Task<BoundedOperation<T>> ExecuteAsync<T>(
         Func<Task<T>> operation,
         TimeSpan timeout,
+        ProviderScope providerScope,
+        CancellationToken startCancellationToken,
         CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -1034,7 +1084,7 @@ public static class KeyRingVerifier
         Task<T> task;
         try
         {
-            task = operation();
+            task = RunScopedAsync(operation, providerScope, startCancellationToken);
             if (task is null)
             {
                 return new(default, new InvalidOperationException(), false, false);
@@ -1072,22 +1122,76 @@ public static class KeyRingVerifier
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-    private static void TrackProvider(Task<IDataProtectionProvider> task, ProviderScope providerScope) =>
-        _ = task.ContinueWith(
-            completed =>
+    private static Task<T> RunScoped<T>(
+        Func<T> operation,
+        ProviderScope providerScope,
+        CancellationToken cancellationToken)
+    {
+        var lease = providerScope.EnterOperation();
+        try
+        {
+            return ReleaseAfterCompletion(
+                KeyRingOperationScheduler.Run(operation, cancellationToken),
+                lease);
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+    }
+
+    private static Task<T> RunScopedAsync<T>(
+        Func<Task<T>> operation,
+        ProviderScope providerScope,
+        CancellationToken cancellationToken)
+    {
+        var lease = providerScope.EnterOperation();
+        try
+        {
+            return ReleaseAfterCompletion(
+                KeyRingOperationScheduler.RunAsync(operation, cancellationToken),
+                lease);
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<T> ReleaseAfterCompletion<T>(Task<T> task, IDisposable lease)
+    {
+        try
+        {
+            return await task.ConfigureAwait(false);
+        }
+        finally
+        {
+            lease.Dispose();
+        }
+    }
+
+    private static async Task<IDataProtectionProvider> TrackProviderAsync(
+        Task<IDataProtectionProvider> task,
+        ProviderScope providerScope,
+        IDisposable lease)
+    {
+        try
+        {
+            var provider = await task.ConfigureAwait(false);
+            if (provider is not null)
             {
-                if (completed.Status == TaskStatus.RanToCompletion && completed.Result is not null)
-                {
-                    providerScope.Add(completed.Result);
-                }
-                else
-                {
-                    _ = completed.Exception;
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+                providerScope.Add(provider);
+            }
+
+            return provider!;
+        }
+        finally
+        {
+            lease.Dispose();
+        }
+    }
 
     private readonly record struct BoundedOperation<T>(T? Value, Exception? Exception, bool TimedOut, bool Canceled);
 
@@ -1105,19 +1209,26 @@ public static class KeyRingVerifier
         using var timeoutSource = new CancellationTokenSource(factory.Timeout);
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
         Task<IDataProtectionProvider> task;
+        IDisposable? lease = null;
 
         try
         {
-            task = factory.CreateProviderAsync(linkedSource.Token);
-            if (task is null)
+            lease = providerScope.EnterOperation();
+            var factoryTask = factory.CreateProviderAsync(linkedSource.Token);
+            if (factoryTask is null)
             {
+                lease.Dispose();
+                lease = null;
                 return (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the factory returned no operation."));
             }
+
+            task = TrackProviderAsync(factoryTask, providerScope, lease);
+            lease = null;
             ObserveFaults(task);
-            TrackProvider(task, providerScope);
         }
         catch (Exception)
         {
+            lease?.Dispose();
             return (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the configured factory could not create a provider."));
         }
 
@@ -1150,6 +1261,7 @@ public static class KeyRingVerifier
     private static async Task<(IKeyManager? Manager, KeyRingVerificationResult? Failure)> CreateKeyManagerAsync(
         KeyRingScenario scenario,
         KeyRingProviderFactory factory,
+        ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -1160,14 +1272,26 @@ public static class KeyRingVerifier
         using var timeoutSource = new CancellationTokenSource(factory.Timeout);
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
         Task<IKeyManager> task;
+        IDisposable? lease = null;
 
         try
         {
-            task = factory.CreateKeyManagerAsync(linkedSource.Token);
+            lease = providerScope.EnterOperation();
+            var factoryTask = factory.CreateKeyManagerAsync(linkedSource.Token);
+            if (factoryTask is null)
+            {
+                lease.Dispose();
+                lease = null;
+                return (null, Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the configured key-manager factory returned no operation."));
+            }
+
+            task = ReleaseAfterCompletion(factoryTask, lease);
+            lease = null;
             ObserveFaults(task);
         }
         catch (Exception)
         {
+            lease?.Dispose();
             return (null, Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the configured key-manager factory could not create a manager."));
         }
 
@@ -1207,7 +1331,18 @@ public static class KeyRingVerifier
     {
         private readonly object _gate = new();
         private readonly HashSet<IDisposable> _providers = new(ReferenceEqualityComparer.Instance);
+        private int _activeOperations;
         private bool _disposed;
+
+        internal IDisposable EnterOperation()
+        {
+            lock (_gate)
+            {
+                _activeOperations++;
+            }
+
+            return new OperationLease(this);
+        }
 
         internal void Add(IDataProtectionProvider provider)
         {
@@ -1219,7 +1354,7 @@ public static class KeyRingVerifier
             var disposeImmediately = false;
             lock (_gate)
             {
-                if (_disposed)
+                if (_disposed && _activeOperations == 0)
                 {
                     disposeImmediately = true;
                 }
@@ -1235,22 +1370,9 @@ public static class KeyRingVerifier
             }
         }
 
-        internal void Release(IDataProtectionProvider provider)
-        {
-            if (provider is IDisposable disposable)
-            {
-                lock (_gate)
-                {
-                    _providers.Remove(disposable);
-                }
-
-                DisposeProvider(disposable);
-            }
-        }
-
         public void Dispose()
         {
-            IDisposable[] providers;
+            IDisposable[]? providers = null;
             lock (_gate)
             {
                 if (_disposed)
@@ -1259,8 +1381,42 @@ public static class KeyRingVerifier
                 }
 
                 _disposed = true;
-                providers = _providers.ToArray();
-                _providers.Clear();
+                if (_activeOperations == 0)
+                {
+                    providers = TakeProviders();
+                }
+            }
+
+            DisposeProviders(providers);
+        }
+
+        private void ExitOperation()
+        {
+            IDisposable[]? providers = null;
+            lock (_gate)
+            {
+                _activeOperations--;
+                if (_disposed && _activeOperations == 0)
+                {
+                    providers = TakeProviders();
+                }
+            }
+
+            DisposeProviders(providers);
+        }
+
+        private IDisposable[] TakeProviders()
+        {
+            var providers = _providers.ToArray();
+            _providers.Clear();
+            return providers;
+        }
+
+        private static void DisposeProviders(IDisposable[]? providers)
+        {
+            if (providers is null)
+            {
+                return;
             }
 
             for (var index = providers.Length - 1; index >= 0; index--)
@@ -1279,6 +1435,15 @@ public static class KeyRingVerifier
             {
                 // Disposal is best effort; provider operation failures remain the verification result.
             }
+        }
+
+        private sealed class OperationLease : IDisposable
+        {
+            private ProviderScope? _owner;
+
+            internal OperationLease(ProviderScope owner) => _owner = owner;
+
+            public void Dispose() => Interlocked.Exchange(ref _owner, null)?.ExitOperation();
         }
     }
 

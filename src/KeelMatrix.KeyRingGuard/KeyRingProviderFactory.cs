@@ -6,6 +6,7 @@ namespace KeelMatrix.KeyRingGuard;
 /// <summary>
 /// Defines how KeyRingGuard constructs an independent Data Protection provider.
 /// Each synchronous or asynchronous operation is observed with the configured bound by the verifier.
+/// A provider remains alive until its scheduled callbacks finish, including callbacks that outlive a timeout.
 /// </summary>
 public sealed class KeyRingProviderFactory
 {
@@ -233,41 +234,51 @@ internal static class KeyRingOperationScheduler
 {
     private static readonly SemaphoreSlim Slots = new(32, 32);
 
-    internal static Task<T> Run<T>(Func<T> operation, CancellationToken startCancellationToken)
+    internal static Task<T> Run<T>(Func<T> operation, CancellationToken startCancellationToken) =>
+        RunCoreAsync(operation, startCancellationToken);
+
+    internal static Task<T> RunAsync<T>(Func<Task<T>> operation, CancellationToken startCancellationToken) =>
+        RunCoreAsync(operation, startCancellationToken);
+
+    private static async Task<T> RunCoreAsync<T>(Func<T> operation, CancellationToken startCancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
 
-        return Task.Run(async () =>
+        await Slots.WaitAsync(startCancellationToken).ConfigureAwait(false);
+        try
         {
-            await Slots.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                startCancellationToken.ThrowIfCancellationRequested();
-                return operation();
-            }
-            finally
-            {
-                Slots.Release();
-            }
-        });
+            startCancellationToken.ThrowIfCancellationRequested();
+            return await Task.Factory.StartNew(
+                operation,
+                CancellationToken.None,
+                TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+                TaskScheduler.Default).ConfigureAwait(false);
+        }
+        finally
+        {
+            Slots.Release();
+        }
     }
 
-    internal static Task<T> RunAsync<T>(Func<Task<T>> operation, CancellationToken startCancellationToken)
+    private static async Task<T> RunCoreAsync<T>(Func<Task<T>> operation, CancellationToken startCancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
 
-        return Task.Run(async () =>
+        await Slots.WaitAsync(startCancellationToken).ConfigureAwait(false);
+        try
         {
-            await Slots.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                startCancellationToken.ThrowIfCancellationRequested();
-                return await operation().ConfigureAwait(false);
-            }
-            finally
-            {
-                Slots.Release();
-            }
-        });
+            startCancellationToken.ThrowIfCancellationRequested();
+            return await Task.Factory.StartNew(
+                    operation,
+                    CancellationToken.None,
+                    TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default)
+                .Unwrap()
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            Slots.Release();
+        }
     }
 }
