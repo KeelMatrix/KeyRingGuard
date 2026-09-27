@@ -2,18 +2,25 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace KeelMatrix.KeyRingGuard.UnitTests;
 
-internal sealed class FakeProvider : IDataProtectionProvider
+internal sealed class FakeProvider : IDataProtectionProvider, IDisposable
 {
     private readonly Func<byte[], byte[]> _unprotect;
     private readonly Func<byte[], byte[]>? _protect;
+    private readonly Action? _dispose;
 
-    public FakeProvider(Func<byte[], byte[]>? protect = null, Func<byte[], byte[]>? unprotect = null)
+    public FakeProvider(
+        Func<byte[], byte[]>? protect = null,
+        Func<byte[], byte[]>? unprotect = null,
+        Action? dispose = null)
     {
         _protect = protect;
         _unprotect = unprotect ?? (payload => payload);
+        _dispose = dispose;
     }
 
     public IDataProtector CreateProtector(string purpose) => new FakeProtector(_protect, _unprotect);
+
+    public void Dispose() => _dispose?.Invoke();
 }
 
 internal sealed class FakeProtector : IDataProtector

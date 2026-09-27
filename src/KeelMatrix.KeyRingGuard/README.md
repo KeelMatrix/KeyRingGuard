@@ -63,6 +63,6 @@ The durable public API is pre-1.0. Breaking changes are possible before the firs
 
 ## Scenarios and evidence
 
-The configured timeout applies to each provider, protector, protect, unprotect, and rotation operation. Synchronous callbacks run on a worker so the verifier can return a bounded timeout result, but an already-running synchronous callback cannot be forcibly interrupted and may finish in the background. Cancellation is cooperative for asynchronous callbacks.
+The configured timeout applies to each provider, protector, protect, unprotect, and rotation operation. Synchronous callbacks run through a bounded shared scheduler so repeated hung callbacks cannot create an unbounded set of dedicated threads; an already-running synchronous callback cannot be forcibly interrupted and may finish in the background. Late provider results are disposed when they arrive. Rotation additionally requires a cancellation-aware key-creation callback and checks that the recreated provider adopts the new key. Cancellation is cooperative for asynchronous callbacks.
 
 Read the [scenario guide](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/usage.md) and [verification boundary](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/what-it-proves.md).

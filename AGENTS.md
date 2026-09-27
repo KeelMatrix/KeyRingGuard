@@ -25,8 +25,9 @@ pwsh ./scripts/Invoke-LocalGate.ps1
 
 - The shipping target framework is `net8.0`.
 - Provider construction is caller-owned; the library never creates an implicit fallback provider.
+- Application-isolation factories must share an explicit `KeyRingBoundary` identity with their control factories.
 - Verification uses synthetic, ephemeral canaries and fixed diagnostics. It never reads, writes, or emits key XML or master key material.
-- No verifier operation deletes or revokes keys. Rotation verification requires an explicitly supplied key-manager factory and a dedicated test store.
+- No verifier operation deletes or revokes keys. Rotation verification requires explicitly supplied linked key-manager and cancellation-aware key-creation factories, plus a dedicated test store.
 - The package has no network behavior and no telemetry dependency. A caller-supplied provider factory may use a network-backed store.
 - Test projects and the package consumer are not packable and must not become package dependencies.
 

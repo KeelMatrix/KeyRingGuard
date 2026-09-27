@@ -63,4 +63,4 @@ The durable public API is pre-1.0. Breaking changes are possible before the firs
 
 ## Scenarios and evidence
 
-See the [installation and scenario guide](docs/usage.md) for replica sharing, isolation, rotation, provider factories, cleanup, and safe network-backed testing. See [what it proves](docs/what-it-proves.md) for the verification boundary.
+See the [installation and scenario guide](docs/usage.md) for replica sharing, boundary-attributed isolation, linked rotation/new-key adoption, provider factories, cleanup, and safe network-backed testing. See [what it proves](docs/what-it-proves.md) for the verification boundary.

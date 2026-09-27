@@ -1,6 +1,1 @@
 #nullable enable
-KeelMatrix.KeyRingGuard.KeyRingIsolationControl
-KeelMatrix.KeyRingGuard.KeyRingIsolationControl.KeyRingIsolationControl(KeelMatrix.KeyRingGuard.KeyRingProviderFactory! primaryFactory, KeelMatrix.KeyRingGuard.KeyRingProviderFactory! secondaryFactory) -> void
-KeelMatrix.KeyRingGuard.KeyRingIsolationControl.PrimaryFactory.get -> KeelMatrix.KeyRingGuard.KeyRingProviderFactory!
-KeelMatrix.KeyRingGuard.KeyRingIsolationControl.SecondaryFactory.get -> KeelMatrix.KeyRingGuard.KeyRingProviderFactory!
-static KeelMatrix.KeyRingGuard.KeyRingVerifier.VerifyWithIsolationControlAsync(KeelMatrix.KeyRingGuard.KeyRingScenario! scenario, KeelMatrix.KeyRingGuard.KeyRingProviderFactory! providerFactory, KeelMatrix.KeyRingGuard.KeyRingProviderFactory? secondaryProviderFactory, KeelMatrix.KeyRingGuard.KeyRingIsolationControl! isolationControl, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<KeelMatrix.KeyRingGuard.KeyRingVerificationResult!>!

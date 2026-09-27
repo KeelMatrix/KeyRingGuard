@@ -70,9 +70,11 @@ The scenario passes only when A can read B's payload and B can read A's payload.
 
 ## Application-name isolation
 
-`ApplicationIsolation` accepts two factories configured with different application discriminators plus a same-boundary control. The control factories must use the same key store and application discriminator and must exchange payloads in both directions before the isolated cross-provider checks run:
+`ApplicationIsolation` accepts two factories configured with different application discriminators plus a same-boundary control. Because provider factories are opaque, declare one `KeyRingBoundary` instance on every factory that represents the same backing store. The control factories must use that same store and application discriminator and must exchange payloads in both directions before the isolated cross-provider checks run:
 
 ```csharp
+var boundary = new KeyRingBoundary();
+// Configure applicationA, applicationB, sharedApplicationA, and sharedApplicationB with boundary.
 var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
     KeyRingScenario.ApplicationIsolation,
     applicationA,
@@ -83,7 +85,7 @@ var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
     CancellationToken.None);
 ```
 
-Each provider must first protect and unprotect its own payload, and an unexpected successful cross-unprotect is reported as `UnexpectedCrossUnprotect` and fails the result. A cryptographic rejection is accepted only after those same-boundary controls succeed; unrelated provider failures remain failures.
+Each provider must first protect and unprotect its own payload, and an unexpected successful cross-unprotect is reported as `UnexpectedCrossUnprotect` and fails the result. A missing or mismatched boundary is an invalid scenario, so an unrelated third-store control cannot turn a storage mismatch into isolation evidence. A cryptographic rejection is accepted only after those same-boundary controls succeed; unrelated provider failures remain failures.
 
 ## Purpose isolation
 
@@ -91,24 +93,32 @@ Each provider must first protect and unprotect its own payload, and an unexpecte
 
 ## Rotation continuity
 
-`RotationContinuity` is opt-in because it changes the supplied key store by asking the supplied `IKeyManager` to create one new key. The verifier requires that key to be observable and active, recreates an independent provider, protects a fresh post-rotation canary, and checks both the old and new payloads. Provide a key-manager factory that uses the same dedicated store as the provider factory:
+`RotationContinuity` is opt-in because it changes the supplied key store by asking the supplied `IKeyManager` to create one new key. The verifier requires an explicit cancellation-aware key-creation callback, proves the new key is observed and active, recreates an independent provider, checks that its protected payload names that key, and checks both the old and new payloads. Resolve the provider and manager from the same provider setup for each factory call, and use one boundary identity to record that caller-declared linkage:
 
 ```csharp
+var boundary = new KeyRingBoundary();
 var factory = new KeyRingProviderFactory(
     _ => DataProtectionProvider.Create(new DirectoryInfo(keyStorePath), builder => builder.SetApplicationName("Orders.App")),
     TimeSpan.FromSeconds(5),
-    _ => keyManager);
+    _ => keyManager,
+    (manager, activationDate, expirationDate, cancellationToken) =>
+        Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return manager.CreateNewKey(activationDate, expirationDate);
+        }, cancellationToken),
+    boundary);
 
 var result = await KeyRingVerifier.VerifyAsync(
     KeyRingScenario.RotationContinuity,
     factory);
 ```
 
-If no key-manager factory is supplied, the result is `RotationUnavailable`. KeyRingGuard never deletes or revokes keys.
+If no linked key-manager and key-creation factories are supplied, the result is `RotationUnavailable`. KeyRingGuard never deletes or revokes keys. A rotation callback that ignores cancellation may continue after a timeout; callbacks must check cancellation before mutating the store and honor it during their work.
 
 ## Provider-factory patterns
 
-The factory may be synchronous or asynchronous. The verifier passes a cancellation token to provider and key-manager factories and applies the configured per-operation timeout to provider creation, protector creation, protect, unprotect, and rotation. Synchronous callbacks run on a worker so an uncooperative callback cannot hold the verifier past its bound, but .NET cannot forcibly interrupt a synchronous callback that is already running; it may finish in the background. Cancellation is cooperative for asynchronous callbacks. Use the asynchronous constructor for network-backed provider creation and honor the token in the provider setup path.
+The factory may be synchronous or asynchronous. The verifier passes a cancellation token to provider and key-manager factories and applies the configured per-operation timeout to provider creation, protector creation, protect, unprotect, and rotation. Synchronous callbacks run through a bounded shared scheduler so repeated hung callbacks cannot create an unbounded set of dedicated threads, but .NET cannot forcibly interrupt a synchronous callback that is already running; it may finish in the background. Late provider results are disposed when they arrive. Cancellation is cooperative for asynchronous callbacks. Use the asynchronous constructor for network-backed provider creation and honor the token in the provider setup path.
 
 Provider exceptions are categorized without copying exception text into the result. Results distinguish provider creation, protect, unprotect, unexpected cross-unprotect, timeout, cancellation, and rotation failures.
 

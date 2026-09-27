@@ -34,14 +34,15 @@ public sealed class FilesystemVerificationTests
     public async Task DifferentApplicationNamesAreIsolated()
     {
         using var store = new TemporaryKeyStore();
+        var boundary = new KeyRingBoundary();
 
         var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
             KeyRingScenario.ApplicationIsolation,
-            store.CreateFactory("Orders.App"),
-            store.CreateFactory("Billing.App"),
+            store.CreateFactory("Orders.App", boundary),
+            store.CreateFactory("Billing.App", boundary),
             new KeyRingIsolationControl(
-                store.CreateFactory("Orders.App"),
-                store.CreateFactory("Orders.App")),
+                store.CreateFactory("Orders.App", boundary),
+                store.CreateFactory("Orders.App", boundary)),
             CancellationToken.None);
 
         Assert.True(result.Succeeded, result.Message);
@@ -52,18 +53,43 @@ public sealed class FilesystemVerificationTests
     {
         using var firstStore = new TemporaryKeyStore();
         using var secondStore = new TemporaryKeyStore();
+        using var controlStore = new TemporaryKeyStore();
+        var boundary = new KeyRingBoundary();
+        var controlBoundary = new KeyRingBoundary();
 
         var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
             KeyRingScenario.ApplicationIsolation,
-            firstStore.CreateFactory("Orders.App"),
-            secondStore.CreateFactory("Billing.App"),
+            firstStore.CreateFactory("Orders.App", boundary),
+            secondStore.CreateFactory("Billing.App", boundary),
             new KeyRingIsolationControl(
-                firstStore.CreateFactory("Orders.App"),
-                secondStore.CreateFactory("Orders.App")),
+                controlStore.CreateFactory("Orders.App", controlBoundary),
+                controlStore.CreateFactory("Orders.App", controlBoundary)),
             CancellationToken.None);
 
         Assert.False(result.Succeeded);
-        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
+        Assert.Equal(KeyRingFailureKind.InvalidScenario, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task ApplicationIsolationRejectsAnUnrelatedSharedBoundaryControl()
+    {
+        using var firstStore = new TemporaryKeyStore();
+        using var secondStore = new TemporaryKeyStore();
+        using var unrelatedStore = new TemporaryKeyStore();
+        var mainBoundary = new KeyRingBoundary();
+        var unrelatedBoundary = new KeyRingBoundary();
+
+        var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
+            KeyRingScenario.ApplicationIsolation,
+            firstStore.CreateFactory("Orders.App", mainBoundary),
+            secondStore.CreateFactory("Billing.App", mainBoundary),
+            new KeyRingIsolationControl(
+                unrelatedStore.CreateFactory("Orders.App", unrelatedBoundary),
+                unrelatedStore.CreateFactory("Orders.App", unrelatedBoundary)),
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.InvalidScenario, result.FailureKind);
     }
 
     [Fact]
@@ -113,6 +139,21 @@ public sealed class FilesystemVerificationTests
             store.CreateRotationFactory("Orders.App"));
 
         Assert.True(result.Succeeded, result.Message);
+    }
+
+    [Fact]
+    public async Task RotationRejectsAKeyManagerFromAnotherStore()
+    {
+        using var providerStore = new TemporaryKeyStore();
+        using var managerStore = new TemporaryKeyStore();
+
+        var managerFactory = managerStore.CreateKeyManagerFactory("Orders.App");
+        var result = await KeyRingVerifier.VerifyAsync(
+            KeyRingScenario.RotationContinuity,
+            providerStore.CreateRotationFactory("Orders.App", managerFactory));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
     }
 
     [Fact]
