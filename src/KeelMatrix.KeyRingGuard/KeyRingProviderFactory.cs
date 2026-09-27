@@ -43,7 +43,7 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes a synchronous provider and cancellation-aware rotation operation.
-    /// The rotation callback must return a key that was absent from the manager before the callback ran.
+    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
@@ -79,7 +79,7 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes a synchronous provider, cancellation-aware rotation operation, and backing-store boundary identity.
-    /// The rotation callback must return a key that was absent from the manager before the callback ran.
+    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
@@ -144,7 +144,7 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes an asynchronous provider and cancellation-aware rotation operation.
-    /// The rotation callback must return a key that was absent from the manager before the callback ran.
+    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
@@ -180,7 +180,7 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes an asynchronous provider, cancellation-aware rotation operation, and backing-store boundary identity.
-    /// The rotation callback must return a key that was absent from the manager before the callback ran.
+    /// The rotation callback must return a key that was absent from the manager's snapshot taken immediately before the callback ran.
     /// </summary>
     /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
     /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>

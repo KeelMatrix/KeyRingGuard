@@ -93,7 +93,7 @@ Each provider must first protect and unprotect its own payload, and an unexpecte
 
 ## Rotation continuity
 
-`RotationContinuity` is opt-in because it changes the supplied key store by asking the supplied `IKeyManager` to create one new key. Before invoking the callback, the verifier snapshots the manager's key IDs; the callback must return a key ID that was absent from that snapshot. It then proves exactly one matching observed key is present, non-revoked, active, and adopted by a recreated independent provider, and checks both the old and new payloads. Resolve the provider and manager from the same provider setup for each factory call, and use one boundary identity to record that caller-declared linkage:
+`RotationContinuity` is opt-in because it changes the supplied key store by asking the supplied `IKeyManager` to create one new key. After the initial provider and key-manager setup succeeds, immediately before invoking the callback, the verifier snapshots the manager's opaque key IDs; the callback must return a key ID that was absent from that snapshot. It then proves exactly one matching observed key is present, non-revoked, active, and adopted by a recreated independent provider, and checks both the old and new payloads. Resolve the provider and manager from the same provider setup for each factory call, and use one boundary identity to record that caller-declared linkage:
 
 ```csharp
 var boundary = new KeyRingBoundary();
