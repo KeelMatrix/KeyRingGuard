@@ -66,6 +66,11 @@ try {
     $result = Invoke-Hygiene $cleanWithCompanyTrailer
     if ($result.ExitCode -ne 0) { throw "A legitimate company co-author trailer should pass history hygiene: $($result.Output)" }
 
+    $requiredPaperclipTrailer = 'Co-Authored' + '-By: Paperclip <noreply@paperclip.ing>'
+    $cleanWithRequiredPaperclipTrailer = New-Fixture 'clean-required-paperclip-trailer' (@('Keep history clean', '') + $requiredPaperclipTrailer -join [Environment]::NewLine)
+    $result = Invoke-Hygiene $cleanWithRequiredPaperclipTrailer
+    if ($result.ExitCode -ne 0) { throw "The exact required Paperclip co-author trailer should pass history hygiene: $($result.Output)" }
+
     $humanTrailers = @(
         'Signed-off-by: External Contributor'
         'Reviewed-by: Human Maintainer'
@@ -143,6 +148,7 @@ try {
         @{ Name = 'co-author'; Message = @('Fixture history', '', 'co_author: KeelMatrix') -join [Environment]::NewLine }
         @{ Name = 'subject-only'; Message = $automationIdentity + ' in the subject' }
         @{ Name = 'bad-trailer'; Message = @('Fixture history', '', ('Co-Authored' + '-By: NotKeelMatrix <noreply@example.invalid>')) -join [Environment]::NewLine; SideBranch = $true }
+        @{ Name = 'paperclip-wrong-email'; Message = @('Fixture history', '', ('Co-Authored' + '-By: Paperclip <paperclip@example.invalid>')) -join [Environment]::NewLine; SideBranch = $true }
         @{ Name = 'merge-commit'; Message = @('Merge side branch', '', ('Signed-off-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine; Merge = $true }
         @{ Name = 'non-company-author'; Message = 'Clean side branch'; NonCompanyAuthor = $true }
         @{ Name = 'ambiguous-travis-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Travis <noreply@travis-ci.org>') -join [Environment]::NewLine }

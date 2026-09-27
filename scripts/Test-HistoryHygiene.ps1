@@ -150,6 +150,8 @@ $machineEmailTerms = @(
 )
 $machineEmailAlternatives = @($machineEmailTerms | ForEach-Object { [regex]::Escape($_) })
 $machineEmailPattern = '(?i)(?:^|[@._-])(?:' + [string]::Join('|', [string[]]$machineEmailAlternatives) + ')(?=$|[@._-])'
+$requiredPaperclipCoAuthorIdentity = 'Paperclip'
+$requiredPaperclipCoAuthorEmail = 'noreply@paperclip.ing'
 
 foreach ($commit in $commits) {
     $refDescription = if ($commitRefs.ContainsKey($commit)) { $commitRefs[$commit] -join ', ' } else { '<unmapped ref>' }
@@ -178,7 +180,11 @@ foreach ($commit in $commits) {
         if ($labelWithoutWhitespace -match '^co_(?:author|authored)$') {
             throw "Commit $commit (refs: $refDescription) contains unsupported attribution trailer '$label'."
         }
-        if ($labelWithoutWhitespace -ieq 'Co-Authored-By' -and $identity -cne 'KeelMatrix' -and $identity -cne 'Dependabot') {
+        $isPaperclipCoAuthor =
+            $labelWithoutWhitespace -ieq 'Co-Authored-By' -and
+            $identity -ceq $requiredPaperclipCoAuthorIdentity -and
+            $email -ceq $requiredPaperclipCoAuthorEmail
+        if ($labelWithoutWhitespace -ieq 'Co-Authored-By' -and $identity -cne 'KeelMatrix' -and $identity -cne 'Dependabot' -and -not $isPaperclipCoAuthor) {
             throw "Commit $commit (refs: $refDescription) contains a $label trailer for non-company author identity '$identity'."
         }
         $isAllowedCompanyCoAuthor = $labelWithoutWhitespace -ieq 'Co-Authored-By' -and $identity -in @('KeelMatrix', 'Dependabot')
@@ -190,13 +196,14 @@ foreach ($commit in $commits) {
         $hasAmbiguousAutomationSignal =
             [regex]::IsMatch($identity, $ambiguousIdentityPattern) -and
             [regex]::IsMatch($email, $machineEmailPattern)
-        if (-not $isAllowedCompanyCoAuthor -and ($isUnambiguousAutomation -or $hasAmbiguousAutomationSignal)) {
+        if (-not $isAllowedCompanyCoAuthor -and -not $isPaperclipCoAuthor -and ($isUnambiguousAutomation -or $hasAmbiguousAutomationSignal)) {
             $reportedIdentity = if ($email) { "$identity <$email>" } else { $identity }
             throw "Commit $commit (refs: $refDescription) contains a $label trailer for internal automation identity '$reportedIdentity'."
         }
     }
 
-    $forbiddenMatch = [regex]::Match($message, $forbiddenHistoryPattern)
+    $messageForForbiddenTerms = $message.Replace('Co-Authored-By: Paperclip <noreply@paperclip.ing>', '')
+    $forbiddenMatch = [regex]::Match($messageForForbiddenTerms, $forbiddenHistoryPattern)
     if ($forbiddenMatch.Success) {
         throw "Commit $commit (refs: $refDescription) contains prohibited history wording '$($forbiddenMatch.Value)'."
     }
