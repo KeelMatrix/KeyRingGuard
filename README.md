@@ -26,20 +26,31 @@ Directory.CreateDirectory(keyStorePath);
 
 try
 {
-    var factory = new KeyRingProviderFactory(
-        _ => DataProtectionProvider.Create(
-            new DirectoryInfo(keyStorePath),
-            builder => builder.SetApplicationName("Sample.App")),
-        TimeSpan.FromSeconds(5));
+    var boundary = new KeyRingBoundary();
 
-    var result = await KeyRingVerifier.VerifyAsync(
+    KeyRingProviderFactory CreateFactory(string applicationName) =>
+        new(
+            _ => DataProtectionProvider.Create(
+                new DirectoryInfo(keyStorePath),
+                builder => builder.SetApplicationName(applicationName)),
+            TimeSpan.FromSeconds(5),
+            createKeyManager: null,
+            boundary);
+
+    var restartResult = await KeyRingVerifier.VerifyAsync(
         KeyRingScenario.RestartContinuity,
-        factory);
+        CreateFactory("Sample.App"));
+    RequireSuccess(restartResult);
 
-    if (!result.Succeeded)
-    {
-        throw new InvalidOperationException(result.Message);
-    }
+    var isolationResult = await KeyRingVerifier.VerifyWithIsolationControlAsync(
+        KeyRingScenario.ApplicationIsolation,
+        CreateFactory("Sample.App"),
+        CreateFactory("Other.App"),
+        new KeyRingIsolationControl(
+            CreateFactory("Sample.App"),
+            CreateFactory("Sample.App")),
+        CancellationToken.None);
+    RequireSuccess(isolationResult);
 
     Console.WriteLine("KeyRingGuard quick start: PASS");
 }
@@ -47,7 +58,17 @@ finally
 {
     Directory.Delete(keyStorePath, recursive: true);
 }
+
+static void RequireSuccess(KeyRingVerificationResult result)
+{
+    if (!result.Succeeded)
+    {
+        throw new InvalidOperationException(result.Message);
+    }
+}
 ```
+
+This quick start verifies both restart continuity and intentional application-name isolation against one temporary key store.
 
 ## Supported runtime and platforms
 

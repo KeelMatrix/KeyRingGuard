@@ -49,6 +49,8 @@ finally
 }
 ```
 
+This quick start verifies both restart continuity and intentional application-name isolation against one temporary key store.
+
 ## Supported runtime and platforms
 
 The package targets `net8.0`. The repository's filesystem integration and package-consumer checks run on Windows, Linux, and macOS in the release-equivalent CI matrix. That evidence covers the shipped filesystem fixtures, not every third-party provider or deployment environment. The repository uses the .NET SDK `10.0.401`, pinned in `global.json`, to build the package.
