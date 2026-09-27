@@ -675,6 +675,24 @@ public static class KeyRingVerifier
             return manager.Failure;
         }
 
+        var existingKeyIds = await ExecuteBoundedAsync(
+            () => SnapshotKeyIds(manager.Manager!),
+            providerFactory.Timeout,
+            providerScope,
+            cancellationToken).ConfigureAwait(false);
+        if (existingKeyIds.TimedOut)
+        {
+            return Failure(scenario, KeyRingFailureKind.Timeout, "Rotation key observation timed out before the configured bound.");
+        }
+        if (existingKeyIds.Canceled)
+        {
+            return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
+        }
+        if (existingKeyIds.Exception is not null)
+        {
+            return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager could not expose its existing keys.");
+        }
+
         var rotationStart = DateTimeOffset.UtcNow;
         var activationDate = rotationStart.AddSeconds(-1);
         var expirationDate = rotationStart.AddDays(1);
@@ -714,7 +732,7 @@ public static class KeyRingVerifier
 
         var newKey = rotationResult.Value;
         var observedKey = await ExecuteBoundedAsync(
-            () => ObserveNewActiveKey(manager.Manager!, newKey!, DateTimeOffset.UtcNow),
+            () => ObserveNewActiveKey(manager.Manager!, newKey!, existingKeyIds.Value!, DateTimeOffset.UtcNow),
             providerFactory.Timeout,
             providerScope,
             cancellationToken).ConfigureAwait(false);
@@ -805,9 +823,32 @@ public static class KeyRingVerifier
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static RotationObservation ObserveNewActiveKey(IKeyManager manager, IKey newKey, DateTimeOffset now)
+    private static HashSet<Guid> SnapshotKeyIds(IKeyManager manager)
+    {
+        var keyIds = new HashSet<Guid>();
+        foreach (var key in manager.GetAllKeys())
+        {
+            if (key is not null)
+            {
+                keyIds.Add(key.KeyId);
+            }
+        }
+
+        return keyIds;
+    }
+
+    private static RotationObservation ObserveNewActiveKey(
+        IKeyManager manager,
+        IKey newKey,
+        HashSet<Guid> existingKeyIds,
+        DateTimeOffset now)
     {
         var keyId = newKey.KeyId;
+        if (existingKeyIds.Contains(keyId))
+        {
+            return new RotationObservation(keyId, false);
+        }
+
         IKey? observedKey = null;
         foreach (var key in manager.GetAllKeys())
         {

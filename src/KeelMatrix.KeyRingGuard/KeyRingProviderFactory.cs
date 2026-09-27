@@ -43,7 +43,15 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes a synchronous provider and cancellation-aware rotation operation.
+    /// The rotation callback must return a key that was absent from the manager before the callback ran.
     /// </summary>
+    /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
+    /// <param name="createKeyManager">Creates a key manager for rotation verification.</param>
+    /// <param name="createNewKey">Creates and returns the newly persisted key, honoring cancellation before and during the mutation.</param>
+    /// <remarks>
+    /// The callback must not return a pre-existing key, even if that key is active.
+    /// </remarks>
     public KeyRingProviderFactory(
         Func<CancellationToken, IDataProtectionProvider> createProvider,
         TimeSpan timeout,
@@ -71,7 +79,16 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes a synchronous provider, cancellation-aware rotation operation, and backing-store boundary identity.
+    /// The rotation callback must return a key that was absent from the manager before the callback ran.
     /// </summary>
+    /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
+    /// <param name="createKeyManager">Creates a key manager for rotation verification.</param>
+    /// <param name="createNewKey">Creates and returns the newly persisted key, honoring cancellation before and during the mutation.</param>
+    /// <param name="boundary">The identity shared by factories configured for the same backing store.</param>
+    /// <remarks>
+    /// The callback must not return a pre-existing key, even if that key is active.
+    /// </remarks>
     public KeyRingProviderFactory(
         Func<CancellationToken, IDataProtectionProvider> createProvider,
         TimeSpan timeout,
@@ -127,7 +144,15 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes an asynchronous provider and cancellation-aware rotation operation.
+    /// The rotation callback must return a key that was absent from the manager before the callback ran.
     /// </summary>
+    /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
+    /// <param name="createKeyManager">Creates a key manager for rotation verification.</param>
+    /// <param name="createNewKey">Creates and returns the newly persisted key, honoring cancellation before and during the mutation.</param>
+    /// <remarks>
+    /// The callback must not return a pre-existing key, even if that key is active.
+    /// </remarks>
     public KeyRingProviderFactory(
         Func<CancellationToken, Task<IDataProtectionProvider>> createProvider,
         TimeSpan timeout,
@@ -155,7 +180,16 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Initializes an asynchronous provider, cancellation-aware rotation operation, and backing-store boundary identity.
+    /// The rotation callback must return a key that was absent from the manager before the callback ran.
     /// </summary>
+    /// <param name="createProvider">Creates a provider using the caller's configuration.</param>
+    /// <param name="timeout">The maximum time allowed for each provider, protector, protection, unprotection, key observation, or rotation operation.</param>
+    /// <param name="createKeyManager">Creates a key manager for rotation verification.</param>
+    /// <param name="createNewKey">Creates and returns the newly persisted key, honoring cancellation before and during the mutation.</param>
+    /// <param name="boundary">The identity shared by factories configured for the same backing store.</param>
+    /// <remarks>
+    /// The callback must not return a pre-existing key, even if that key is active.
+    /// </remarks>
     public KeyRingProviderFactory(
         Func<CancellationToken, Task<IDataProtectionProvider>> createProvider,
         TimeSpan timeout,

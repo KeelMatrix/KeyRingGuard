@@ -45,6 +45,17 @@ internal sealed class TemporaryKeyStore : IDisposable
                 boundary);
     }
 
+    public KeyRingProviderFactory CreateAsyncFactory(string applicationName)
+        => new(
+            async _ =>
+            {
+                await Task.Yield();
+                return DataProtectionProvider.Create(
+                    new DirectoryInfo(Path),
+                    builder => builder.SetApplicationName(applicationName));
+            },
+            TimeSpan.FromSeconds(5));
+
     public KeyRingProviderFactory CreateRotationFactory(string applicationName)
         => CreateRotationFactory(applicationName, (Func<CancellationToken, IKeyManager>?)null);
 
@@ -77,6 +88,40 @@ internal sealed class TemporaryKeyStore : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     return manager.CreateNewKey(activationDate, expirationDate);
                 }, cancellationToken));
+    }
+
+    public KeyRingProviderFactory CreateAsyncRotationFactory(string applicationName)
+    {
+        CreateInitialRotationKey(applicationName);
+        var pendingManagers = new Queue<IKeyManager>();
+
+        return new KeyRingProviderFactory(
+            async _ =>
+            {
+                await Task.Yield();
+                var services = new ServiceCollection();
+                services
+                    .AddDataProtection()
+                    .PersistKeysToFileSystem(new DirectoryInfo(Path))
+                    .SetApplicationName(applicationName);
+                services.Configure<KeyManagementOptions>(options => options.AutoGenerateKeys = false);
+                var serviceProvider = services.BuildServiceProvider();
+                _ownedResources.Add(serviceProvider);
+                pendingManagers.Enqueue(serviceProvider.GetRequiredService<IKeyManager>());
+                return new OwnedProvider(serviceProvider.GetRequiredService<IDataProtectionProvider>(), serviceProvider);
+            },
+            TimeSpan.FromSeconds(5),
+            async _ =>
+            {
+                await Task.Yield();
+                return pendingManagers.Dequeue();
+            },
+            async (manager, activationDate, expirationDate, cancellationToken) =>
+            {
+                await Task.Yield();
+                cancellationToken.ThrowIfCancellationRequested();
+                return manager.CreateNewKey(activationDate, expirationDate);
+            });
     }
 
     public KeyRingProviderFactory CreateRotationFactory(string applicationName, KeyRingBoundary boundary)

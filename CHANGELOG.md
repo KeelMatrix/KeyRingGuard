@@ -7,14 +7,15 @@ This changelog records consumer-facing changes to KeelMatrix.KeyRingGuard.
 ### Fixed
 
 - Keeps providers alive until timed-out callbacks finish and removes canceled callbacks before scheduler admission, preventing disposal races and queued-work retention.
-- Classifies queue-admission timeouts separately from caller cancellation and validates rotation against exactly one matching, active, non-revoked observed key.
+- Classifies queue-admission timeouts separately from caller cancellation and validates rotation against a genuinely new key plus exactly one matching, active, non-revoked observed key.
+- Adds end-to-end filesystem coverage for successful asynchronous provider, key-manager, and rotation callbacks, while preserving sanitized async failure handling.
 
 ## [0.1.0] - 2026-09-26
 
 ### Added
 
 - Provides bounded verification for restart continuity, replica sharing, application and purpose isolation, and opt-in rotation continuity using caller-supplied ASP.NET Core Data Protection providers.
-- Requires independent provider instances for restart and replica transitions, explicit backing-store boundary identities before application-isolation verdicts, and a cancellation-aware linked rotation operation that proves the recreated provider adopts exactly one matching active, non-revoked key while preserving pre- and post-rotation canaries.
+- Requires independent provider instances for restart and replica transitions, explicit backing-store boundary identities before application-isolation verdicts, and a cancellation-aware linked rotation operation that returns a key absent from the pre-rotation snapshot, proves the recreated provider adopts exactly one matching active, non-revoked key, and preserves pre- and post-rotation canaries.
 - Disposes every created disposable provider, including early-exit and late-timeout completions, and bounds synchronous callback scheduling without exposing callback exceptions or secret material.
 - Keeps timeout observation reliable when synchronous callbacks block under concurrent cross-platform test or application activity by running bounded callback work in dedicated scheduler slots.
 - Generates synthetic ephemeral canaries and sanitized diagnostics that exclude key material, key XML, provider configuration, and plaintext payloads.

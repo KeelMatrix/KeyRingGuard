@@ -18,6 +18,18 @@ public sealed class FilesystemVerificationTests
     }
 
     [Fact]
+    public async Task AsyncRestartContinuitySurvivesIndependentProviderRecreation()
+    {
+        using var store = new TemporaryKeyStore();
+
+        var result = await KeyRingVerifier.VerifyAsync(
+            KeyRingScenario.RestartContinuity,
+            store.CreateAsyncFactory("Orders.App"));
+
+        Assert.True(result.Succeeded, result.Message);
+    }
+
+    [Fact]
     public async Task ReplicaSharingWorksInBothDirections()
     {
         using var store = new TemporaryKeyStore();
@@ -137,6 +149,18 @@ public sealed class FilesystemVerificationTests
         var result = await KeyRingVerifier.VerifyAsync(
             KeyRingScenario.RotationContinuity,
             store.CreateRotationFactory("Orders.App"));
+
+        Assert.True(result.Succeeded, result.Message);
+    }
+
+    [Fact]
+    public async Task AsyncRotationCompletesProviderManagerAndKeyCreationCallbacks()
+    {
+        using var store = new TemporaryKeyStore();
+
+        var result = await KeyRingVerifier.VerifyAsync(
+            KeyRingScenario.RotationContinuity,
+            store.CreateAsyncRotationFactory("Orders.App"));
 
         Assert.True(result.Succeeded, result.Message);
     }

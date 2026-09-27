@@ -218,6 +218,22 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
+    public async Task AsyncProviderFailureIsCategorizedWithoutExceptionText()
+    {
+        const string secret = "<async key secret> provider-path=do-not-emit";
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, Task<IDataProtectionProvider>>)(_ =>
+                Task.FromException<IDataProtectionProvider>(new InvalidOperationException(secret))),
+            TimeSpan.FromSeconds(1));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.ProviderCreation, result.FailureKind);
+        Assert.DoesNotContain(secret, result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SynchronousProtectTimeoutIsBounded()
     {
         var factory = new KeyRingProviderFactory(
@@ -478,6 +494,75 @@ public sealed class VerifierFailureTests
         Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
     }
 
+    [Fact]
+    public async Task RotationRejectsCallbackReturningPreExistingKey()
+    {
+        var manager = new ExistingKeyManager();
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, IDataProtectionProvider>)(_ => new FakeProvider()),
+            TimeSpan.FromSeconds(1),
+            _ => manager,
+            static (keyManager, activationDate, expirationDate, cancellationToken) =>
+                Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate)));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task AsyncRotationRejectsCallbackReturningPreExistingKey()
+    {
+        var manager = new ExistingKeyManager();
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, Task<IDataProtectionProvider>>)(_ =>
+                Task.FromResult<IDataProtectionProvider>(new FakeProvider())),
+            TimeSpan.FromSeconds(1),
+            (Func<CancellationToken, Task<IKeyManager>>)(_ => Task.FromResult<IKeyManager>(manager)),
+            async (keyManager, activationDate, expirationDate, cancellationToken) =>
+            {
+                await Task.Yield();
+                cancellationToken.ThrowIfCancellationRequested();
+                return keyManager.CreateNewKey(activationDate, expirationDate);
+            });
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task AsyncRotationCallbackHonorsCallerCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var callbackStarted = new ManualResetEventSlim();
+        var factory = new KeyRingProviderFactory(
+            (Func<CancellationToken, Task<IDataProtectionProvider>>)(_ =>
+                Task.FromResult<IDataProtectionProvider>(new FakeProvider())),
+            TimeSpan.FromSeconds(5),
+            (Func<CancellationToken, Task<IKeyManager>>)(_ => Task.FromResult<IKeyManager>(new NullKeyManager())),
+            async (manager, activationDate, expirationDate, cancellationToken) =>
+            {
+                callbackStarted.Set();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return manager.CreateNewKey(activationDate, expirationDate);
+            });
+
+        var verification = KeyRingVerifier.VerifyAsync(
+            KeyRingScenario.RotationContinuity,
+            factory,
+            cancellationToken: cancellation.Token);
+        Assert.True(callbackStarted.Wait(TimeSpan.FromSeconds(1)));
+
+        cancellation.Cancel();
+        var result = await verification;
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Canceled, result.FailureKind);
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("duplicate")]
@@ -600,6 +685,24 @@ internal sealed class NullKeyManager : IKeyManager
     public IKey CreateNewKey(DateTimeOffset activationDate, DateTimeOffset expirationDate) => null!;
 
     public IReadOnlyCollection<IKey> GetAllKeys() => [];
+
+    public CancellationToken GetCacheExpirationToken() => CancellationToken.None;
+
+    public void RevokeKey(Guid keyId, string? reason) => throw new NotSupportedException();
+
+    public void RevokeAllKeys(DateTimeOffset revocationDate, string? reason) => throw new NotSupportedException();
+}
+
+internal sealed class ExistingKeyManager : IKeyManager
+{
+    private readonly TestKey _existingKey = new(
+        Guid.NewGuid(),
+        DateTimeOffset.UtcNow.AddDays(-1),
+        DateTimeOffset.UtcNow.AddDays(1));
+
+    public IKey CreateNewKey(DateTimeOffset activationDate, DateTimeOffset expirationDate) => _existingKey;
+
+    public IReadOnlyCollection<IKey> GetAllKeys() => [_existingKey];
 
     public CancellationToken GetCacheExpirationToken() => CancellationToken.None;
 
