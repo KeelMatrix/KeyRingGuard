@@ -49,9 +49,11 @@ finally
 
 Factories are caller-owned. KeyRingGuard does not silently replace a failed or missing factory with an in-memory provider.
 
+> Warning: Data Protection can auto-generate keys while a provider is initialized. A check against a real shared store may mutate that store even when the scenario itself only verifies continuity or isolation. `KeyManagementOptions.AutoGenerateKeys` controls this behavior for the caller's provider configuration. Use a temporary or dedicated test store by default.
+
 ## Restart continuity
 
-`RestartContinuity` creates a provider, protects a generated in-memory canary, creates a second provider from the same factory, and checks that the second provider can unprotect the payload. This is the test for persistence across a process restart or deployment replacement.
+`RestartContinuity` creates a provider, protects a generated in-memory canary, disposes that provider, creates an independent second provider from the same factory, and checks that the second provider can unprotect the payload. A factory that returns the same live provider instance is rejected. This is the test for persistence across a process restart or deployment replacement.
 
 ## Replica sharing
 
@@ -68,25 +70,28 @@ The scenario passes only when A can read B's payload and B can read A's payload.
 
 ## Application-name isolation
 
-`ApplicationIsolation` accepts two factories configured with different application discriminators. It protects with each provider and expects both cross-provider unprotect operations to fail:
+`ApplicationIsolation` accepts two factories configured with different application discriminators plus a same-boundary control. The control factories must use the same key store and application discriminator and must exchange payloads in both directions before the isolated cross-provider checks run:
 
 ```csharp
-var result = await KeyRingVerifier.VerifyAsync(
+var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
     KeyRingScenario.ApplicationIsolation,
     applicationA,
-    applicationB);
+    applicationB,
+    new KeyRingIsolationControl(
+        sharedApplicationA,
+        sharedApplicationB),
+    CancellationToken.None);
 ```
 
-An unexpected successful cross-unprotect is reported as `UnexpectedCrossUnprotect` and fails the result.
-Any `CryptographicException`, including a derived exception type, is treated as the expected isolation rejection.
+Each provider must first protect and unprotect its own payload, and an unexpected successful cross-unprotect is reported as `UnexpectedCrossUnprotect` and fails the result. A cryptographic rejection is accepted only after those same-boundary controls succeed; unrelated provider failures remain failures.
 
 ## Purpose isolation
 
-`PurposeIsolation` creates two providers from the supplied factory, protects with two different purposes, and expects cross-purpose unprotect to fail. The purpose strings are owned by the verifier so the test remains synthetic and does not require a caller payload.
+`PurposeIsolation` creates two independent providers from the supplied factory, first proves that they can exchange a same-purpose payload, then protects with two different purposes and expects cross-purpose unprotect to fail. The purpose strings are owned by the verifier so the test remains synthetic and does not require a caller payload. A factory that silently selects a different store on each call fails the shared-boundary control.
 
 ## Rotation continuity
 
-`RotationContinuity` is opt-in because it changes the supplied key store by asking the supplied `IKeyManager` to create one new key. Provide a key-manager factory that uses the same dedicated store as the provider factory:
+`RotationContinuity` is opt-in because it changes the supplied key store by asking the supplied `IKeyManager` to create one new key. The verifier requires that key to be observable and active, recreates an independent provider, protects a fresh post-rotation canary, and checks both the old and new payloads. Provide a key-manager factory that uses the same dedicated store as the provider factory:
 
 ```csharp
 var factory = new KeyRingProviderFactory(

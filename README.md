@@ -51,11 +51,11 @@ finally
 
 ## Supported runtime and platforms
 
-The package targets `net8.0`. Windows is supported and tested here. Linux and macOS are supported by the package, but filesystem behavior on those platforms has not yet been verified in this repository. The repository uses the .NET SDK `10.0.401`, pinned in `global.json`, to build the package.
+The package targets `net8.0`. The repository's filesystem integration and package-consumer checks run on Windows, Linux, and macOS in the release-equivalent CI matrix. That evidence covers the shipped filesystem fixtures, not every third-party provider or deployment environment. The repository uses the .NET SDK `10.0.401`, pinned in `global.json`, to build the package.
 
 ## Safety and privacy
 
-KeyRingGuard uses synthetic, ephemeral canaries only, never key material. It has no telemetry dependency and does not delete or revoke keys. Verification is non-destructive to existing keys; opt-in rotation creates one new key in the caller's dedicated test store. Read [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
+KeyRingGuard uses synthetic, ephemeral canaries only, never key material. It has no telemetry dependency and does not delete or revoke keys. A caller-supplied Data Protection provider can auto-generate keys during initialization and mutate a real shared store, even when the scenario is intended as a check. `KeyManagementOptions.AutoGenerateKeys` controls that provider behavior; use a temporary or dedicated test store by default. Only opt-in rotation explicitly requests one new key. Read [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 ## Compatibility
 

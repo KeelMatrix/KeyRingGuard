@@ -25,4 +25,4 @@ Security fixes are prioritized for the latest released package line. Older versi
 
 ## Product Security Notes
 
-KeyRingGuard generates only synthetic in-memory canaries. It does not read or emit Data Protection key XML, and it never deletes or revokes keys. Run checks against temporary or dedicated stores. A caller-supplied provider factory remains responsible for its backing store, credentials, transport security, and access controls.
+KeyRingGuard generates only synthetic in-memory canaries. It does not read or emit Data Protection key XML, and it never deletes or revokes keys. Data Protection can auto-generate keys during provider initialization; a check against a real shared store may therefore mutate that store. `KeyManagementOptions.AutoGenerateKeys` controls the caller's provider behavior. Run checks against temporary or dedicated stores by default. A caller-supplied provider factory remains responsible for its backing store, credentials, transport security, and access controls.

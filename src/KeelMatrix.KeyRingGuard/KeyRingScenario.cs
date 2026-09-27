@@ -43,7 +43,7 @@ public sealed class KeyRingScenario
         ContinuityExpectation.PreserveProtectedPayload);
 
     /// <summary>
-    /// Verifies that different application discriminators reject one another's payloads.
+    /// Verifies that different application discriminators reject one another's payloads after a same-boundary control.
     /// </summary>
     public static KeyRingScenario ApplicationIsolation { get; } = new(
         "Application isolation",
@@ -51,7 +51,7 @@ public sealed class KeyRingScenario
         isolationExpectation: IsolationExpectation.RejectCrossUnprotect);
 
     /// <summary>
-    /// Verifies that different purposes reject one another's payloads.
+    /// Verifies that different purposes reject one another's payloads after a same-purpose exchange control.
     /// </summary>
     public static KeyRingScenario PurposeIsolation { get; } = new(
         "Purpose isolation",
@@ -59,7 +59,7 @@ public sealed class KeyRingScenario
         isolationExpectation: IsolationExpectation.RejectCrossUnprotect);
 
     /// <summary>
-    /// Verifies that a payload remains readable after an explicitly requested key rotation.
+    /// Verifies an observed active key transition while preserving payloads from before and after rotation.
     /// </summary>
     public static KeyRingScenario RotationContinuity { get; } = new(
         "Rotation continuity",

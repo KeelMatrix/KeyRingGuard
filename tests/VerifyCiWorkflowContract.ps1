@@ -25,7 +25,6 @@ $requiredFragments = @(
     'scripts/Invoke-VulnerabilityAudit.ps1'
     'scripts/Inspect-Package.ps1'
     'scripts/Invoke-PackageConsumerSmoke.ps1'
-    "if: hashFiles('icon.png') != ''"
 )
 foreach ($fragment in $requiredFragments) {
     if ($text.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
@@ -33,5 +32,9 @@ foreach ($fragment in $requiredFragments) {
     }
 }
 
-Write-Output 'CI workflow contract: PASS (cross-platform matrix, release-equivalent contracts, security audit, conditional icon-aware package inspection, and consumer smoke are present).'
+if ($text.IndexOf("if: hashFiles('icon.png') != ''", [StringComparison]::Ordinal) -ge 0) {
+    throw 'CI workflow contract failed: required package/icon inspection must not be conditionally skipped.'
+}
+
+Write-Output 'CI workflow contract: PASS (cross-platform matrix, release-equivalent contracts, fail-closed icon-aware package inspection, and consumer smoke are present).'
 exit 0

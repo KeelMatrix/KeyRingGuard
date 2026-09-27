@@ -32,7 +32,7 @@ pwsh ./scripts/Invoke-LocalGate.ps1
 
 ## Validation strategy
 
-Use the smallest affected test project first. Before handoff, run the local validation path once, inspect the `.nupkg` and `.snupkg`, and run the package consumer from an isolated local feed. The local validation path is the release-equivalent check for this private repository; no remote workflow is required.
+Use the smallest affected test project first. Before handoff, run the local validation path once, inspect the `.nupkg` and `.snupkg`, and run the package consumer from an isolated local feed. Public CI additionally proves the claimed Windows/Linux/macOS matrix; package inspection must not be skipped when the founder-owned icon is absent.
 
 ## Scope boundaries
 

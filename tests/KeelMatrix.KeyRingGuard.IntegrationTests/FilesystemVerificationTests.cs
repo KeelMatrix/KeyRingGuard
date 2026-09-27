@@ -1,4 +1,5 @@
 using KeelMatrix.KeyRingGuard;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace KeelMatrix.KeyRingGuard.IntegrationTests;
 
@@ -34,12 +35,35 @@ public sealed class FilesystemVerificationTests
     {
         using var store = new TemporaryKeyStore();
 
-        var result = await KeyRingVerifier.VerifyAsync(
+        var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
             KeyRingScenario.ApplicationIsolation,
             store.CreateFactory("Orders.App"),
-            store.CreateFactory("Billing.App"));
+            store.CreateFactory("Billing.App"),
+            new KeyRingIsolationControl(
+                store.CreateFactory("Orders.App"),
+                store.CreateFactory("Orders.App")),
+            CancellationToken.None);
 
         Assert.True(result.Succeeded, result.Message);
+    }
+
+    [Fact]
+    public async Task ApplicationIsolationDoesNotPassForSeparateStores()
+    {
+        using var firstStore = new TemporaryKeyStore();
+        using var secondStore = new TemporaryKeyStore();
+
+        var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
+            KeyRingScenario.ApplicationIsolation,
+            firstStore.CreateFactory("Orders.App"),
+            secondStore.CreateFactory("Billing.App"),
+            new KeyRingIsolationControl(
+                firstStore.CreateFactory("Orders.App"),
+                secondStore.CreateFactory("Orders.App")),
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
     }
 
     [Fact]
@@ -53,6 +77,30 @@ public sealed class FilesystemVerificationTests
             store.CreateFactory("Orders.App"));
 
         Assert.True(result.Succeeded, result.Message);
+    }
+
+    [Fact]
+    public async Task PurposeIsolationDoesNotPassForPerCallStores()
+    {
+        using var firstStore = new TemporaryKeyStore();
+        using var secondStore = new TemporaryKeyStore();
+        var factoryCalls = 0;
+        var factory = new KeyRingProviderFactory(
+            _ =>
+            {
+                var store = Interlocked.Increment(ref factoryCalls) % 2 == 1 ? firstStore : secondStore;
+                return DataProtectionProvider.Create(
+                    new DirectoryInfo(store.Path),
+                    builder => builder.SetApplicationName("Orders.App"));
+            },
+            TimeSpan.FromSeconds(5));
+
+        var result = await KeyRingVerifier.VerifyAsync(
+            KeyRingScenario.PurposeIsolation,
+            factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
     }
 
     [Fact]

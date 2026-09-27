@@ -14,8 +14,7 @@ public static class KeyRingVerifier
     private const string AlternatePurpose = "KeelMatrix.KeyRingGuard.Verification.Alternate";
 
     /// <summary>
-    /// Verifies a scenario using one or two caller-supplied provider factories. For isolation scenarios,
-    /// any <see cref="CryptographicException"/>, including derived exception types, is treated as the expected rejection.
+    /// Verifies a scenario using one or two caller-supplied provider factories.
     /// </summary>
     /// <param name="scenario">The immutable scenario description to execute.</param>
     /// <param name="providerFactory">The primary provider factory.</param>
@@ -27,6 +26,38 @@ public static class KeyRingVerifier
         KeyRingProviderFactory providerFactory,
         KeyRingProviderFactory? secondaryProviderFactory = null,
         CancellationToken cancellationToken = default)
+        => await VerifyCoreAsync(
+            scenario,
+            providerFactory,
+            secondaryProviderFactory,
+            isolationControl: null,
+            cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Verifies a scenario using caller-supplied provider factories and a shared-boundary control.
+    /// Application isolation requires a control configured for the same key store and application discriminator
+    /// on both sides so that rejection is not attributed to an unrelated provider mismatch.
+    /// </summary>
+    /// <param name="scenario">The immutable scenario description to execute.</param>
+    /// <param name="providerFactory">The primary provider factory.</param>
+    /// <param name="secondaryProviderFactory">The second factory required by replica and isolation scenarios.</param>
+    /// <param name="isolationControl">The same-boundary control required by application isolation.</param>
+    /// <param name="cancellationToken">Cancels provider creation and verification operations.</param>
+    /// <returns>A structured result that never includes key material, canaries, or raw provider exceptions.</returns>
+    public static Task<KeyRingVerificationResult> VerifyWithIsolationControlAsync(
+        KeyRingScenario scenario,
+        KeyRingProviderFactory providerFactory,
+        KeyRingProviderFactory? secondaryProviderFactory,
+        KeyRingIsolationControl isolationControl,
+        CancellationToken cancellationToken)
+        => VerifyCoreAsync(scenario, providerFactory, secondaryProviderFactory, isolationControl, cancellationToken);
+
+    private static async Task<KeyRingVerificationResult> VerifyCoreAsync(
+        KeyRingScenario scenario,
+        KeyRingProviderFactory providerFactory,
+        KeyRingProviderFactory? secondaryProviderFactory,
+        KeyRingIsolationControl? isolationControl,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(scenario);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -45,11 +76,17 @@ public static class KeyRingVerifier
         }
         else if (scenario.IsApplicationIsolation())
         {
-            result = await VerifyIsolationAsync(scenario, providerFactory, secondaryProviderFactory, canary, SharedPurpose, SharedPurpose, cancellationToken).ConfigureAwait(false);
+            result = await VerifyApplicationIsolationAsync(
+                scenario,
+                providerFactory,
+                secondaryProviderFactory,
+                isolationControl,
+                canary,
+                cancellationToken).ConfigureAwait(false);
         }
         else if (scenario.IsPurposeIsolation())
         {
-            result = await VerifyIsolationAsync(scenario, providerFactory, providerFactory, canary, SharedPurpose, AlternatePurpose, cancellationToken).ConfigureAwait(false);
+            result = await VerifyPurposeIsolationAsync(scenario, providerFactory, canary, cancellationToken).ConfigureAwait(false);
         }
         else if (scenario.IsRotationContinuity())
         {
@@ -98,10 +135,19 @@ public static class KeyRingVerifier
             return protectedResult.Failure;
         }
 
+        DisposeProvider(first.Provider!);
         var second = await CreateProviderAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
         if (second.Failure is not null)
         {
             return second.Failure;
+        }
+
+        if (ReferenceEquals(first.Provider, second.Provider))
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.ProviderCreation,
+                "Provider creation failed: the restart factory reused the same provider instance.");
         }
 
         return await UnprotectAndCompareAsync(
@@ -136,6 +182,14 @@ public static class KeyRingVerifier
         if (second.Failure is not null)
         {
             return second.Failure;
+        }
+
+        if (ReferenceEquals(first.Provider, second.Provider))
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.ProviderCreation,
+                "Provider creation failed: replica factories returned the same provider instance.");
         }
 
         var firstProtectorResult = await CreateProtectorAsync(
@@ -205,18 +259,76 @@ public static class KeyRingVerifier
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<KeyRingVerificationResult> VerifyIsolationAsync(
+    private static async Task<KeyRingVerificationResult> VerifyPurposeIsolationAsync(
+        KeyRingScenario scenario,
+        KeyRingProviderFactory providerFactory,
+        byte[] canary,
+        CancellationToken cancellationToken)
+    {
+        var first = await CreateProviderAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
+        if (first.Failure is not null)
+        {
+            return first.Failure;
+        }
+
+        var second = await CreateProviderAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
+        if (second.Failure is not null)
+        {
+            return second.Failure;
+        }
+
+        if (ReferenceEquals(first.Provider, second.Provider))
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.ProviderCreation,
+                "Provider creation failed: purpose-isolation factory calls returned the same provider instance.");
+        }
+
+        var control = await VerifySharedBoundaryAsync(
+            scenario,
+            first.Provider!,
+            second.Provider!,
+            canary,
+            providerFactory.Timeout,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (control is not null)
+        {
+            return control;
+        }
+
+        return await VerifyCrossBoundaryRejectionAsync(
+            scenario,
+            first.Provider!,
+            second.Provider!,
+            canary,
+            SharedPurpose,
+            AlternatePurpose,
+            providerFactory.Timeout,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<KeyRingVerificationResult> VerifyApplicationIsolationAsync(
         KeyRingScenario scenario,
         KeyRingProviderFactory providerFactory,
         KeyRingProviderFactory? secondaryProviderFactory,
+        KeyRingIsolationControl? isolationControl,
         byte[] canary,
-        string firstPurpose,
-        string secondPurpose,
         CancellationToken cancellationToken)
     {
         if (secondaryProviderFactory is null)
         {
-            return Failure(scenario, KeyRingFailureKind.InvalidScenario, "Isolation requires a second provider factory.");
+            return Failure(scenario, KeyRingFailureKind.InvalidScenario, "Application isolation requires a second provider factory.");
+        }
+
+        if (isolationControl is null)
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.InvalidScenario,
+                "Application isolation requires a same-boundary control with the same key store and application discriminator.");
         }
 
         var first = await CreateProviderAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
@@ -231,11 +343,147 @@ public static class KeyRingVerifier
             return second.Failure;
         }
 
-        var firstProtectorResult = await CreateProtectorAsync(
+        if (ReferenceEquals(first.Provider, second.Provider))
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.ProviderCreation,
+                "Provider creation failed: application-isolation factories returned the same provider instance.");
+        }
+
+        var controlFirst = await CreateProviderAsync(scenario, isolationControl.PrimaryFactory, cancellationToken).ConfigureAwait(false);
+        if (controlFirst.Failure is not null)
+        {
+            return controlFirst.Failure;
+        }
+
+        var controlSecond = await CreateProviderAsync(scenario, isolationControl.SecondaryFactory, cancellationToken).ConfigureAwait(false);
+        if (controlSecond.Failure is not null)
+        {
+            return controlSecond.Failure;
+        }
+
+        if (ReferenceEquals(controlFirst.Provider, controlSecond.Provider))
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.ProviderCreation,
+                "Provider creation failed: application-isolation control factories returned the same provider instance.");
+        }
+
+        var control = await VerifySharedBoundaryAsync(
+            scenario,
+            controlFirst.Provider!,
+            controlSecond.Provider!,
+            canary,
+            isolationControl.PrimaryFactory.Timeout,
+            isolationControl.SecondaryFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (control is not null)
+        {
+            return control;
+        }
+
+        return await VerifyCrossBoundaryRejectionAsync(
             scenario,
             first.Provider!,
-            firstPurpose,
+            second.Provider!,
+            canary,
+            SharedPurpose,
+            SharedPurpose,
             providerFactory.Timeout,
+            secondaryProviderFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<KeyRingVerificationResult?> VerifySharedBoundaryAsync(
+        KeyRingScenario scenario,
+        IDataProtectionProvider first,
+        IDataProtectionProvider second,
+        byte[] canary,
+        TimeSpan firstTimeout,
+        TimeSpan secondTimeout,
+        CancellationToken cancellationToken)
+    {
+        var firstProtected = await ProtectWithPurposeAsync(
+            scenario,
+            first,
+            canary,
+            SharedPurpose,
+            firstTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (firstProtected.Failure is not null)
+        {
+            return firstProtected.Failure;
+        }
+
+        var secondResult = await UnprotectAndCompareAsync(
+            scenario,
+            second,
+            firstProtected.Value!,
+            canary,
+            SharedPurpose,
+            secondTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (!secondResult.Succeeded)
+        {
+            return secondResult.FailureKind is KeyRingFailureKind.Unprotect or KeyRingFailureKind.Protect
+                ? Failure(
+                    scenario,
+                    KeyRingFailureKind.Unprotect,
+                    "Isolation failed: the configured providers could not establish the shared-boundary control.")
+                : secondResult;
+        }
+
+        var secondProtected = await ProtectWithPurposeAsync(
+            scenario,
+            second,
+            canary,
+            SharedPurpose,
+            secondTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (secondProtected.Failure is not null)
+        {
+            return secondProtected.Failure;
+        }
+
+        var firstResult = await UnprotectAndCompareAsync(
+            scenario,
+            first,
+            secondProtected.Value!,
+            canary,
+            SharedPurpose,
+            firstTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (firstResult.Succeeded)
+        {
+            return null;
+        }
+
+        return firstResult.FailureKind is KeyRingFailureKind.Unprotect or KeyRingFailureKind.Protect
+            ? Failure(
+                scenario,
+                KeyRingFailureKind.Unprotect,
+                "Isolation failed: the configured providers could not establish the shared-boundary control.")
+            : firstResult;
+    }
+
+    private static async Task<KeyRingVerificationResult> VerifyCrossBoundaryRejectionAsync(
+        KeyRingScenario scenario,
+        IDataProtectionProvider first,
+        IDataProtectionProvider second,
+        byte[] canary,
+        string firstPurpose,
+        string secondPurpose,
+        TimeSpan firstTimeout,
+        TimeSpan secondTimeout,
+        CancellationToken cancellationToken)
+    {
+        var firstProtectorResult = await CreateProtectorAsync(
+            scenario,
+            first,
+            firstPurpose,
+            firstTimeout,
             cancellationToken).ConfigureAwait(false);
         if (firstProtectorResult.Failure is not null)
         {
@@ -244,9 +492,9 @@ public static class KeyRingVerifier
 
         var secondProtectorResult = await CreateProtectorAsync(
             scenario,
-            second.Provider!,
+            second,
             secondPurpose,
-            secondaryProviderFactory.Timeout,
+            secondTimeout,
             cancellationToken).ConfigureAwait(false);
         if (secondProtectorResult.Failure is not null)
         {
@@ -257,7 +505,7 @@ public static class KeyRingVerifier
             scenario,
             firstProtectorResult.Value!,
             canary,
-            providerFactory.Timeout,
+            firstTimeout,
             cancellationToken).ConfigureAwait(false);
         if (firstProtectedResult.Failure is not null)
         {
@@ -268,19 +516,55 @@ public static class KeyRingVerifier
             scenario,
             secondProtectorResult.Value!,
             canary,
-            secondaryProviderFactory.Timeout,
+            secondTimeout,
             cancellationToken).ConfigureAwait(false);
         if (secondProtectedResult.Failure is not null)
         {
             return secondProtectedResult.Failure;
         }
 
+        var firstSelfResult = await UnprotectAndCompareAsync(
+            scenario,
+            first,
+            firstProtectedResult.Value!,
+            canary,
+            firstPurpose,
+            firstTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (!firstSelfResult.Succeeded)
+        {
+            return firstSelfResult.FailureKind is KeyRingFailureKind.Unprotect or KeyRingFailureKind.Protect
+                ? Failure(
+                    scenario,
+                    KeyRingFailureKind.Unprotect,
+                    "Isolation failed: the first provider could not complete its same-boundary control.")
+                : firstSelfResult;
+        }
+
+        var secondSelfResult = await UnprotectAndCompareAsync(
+            scenario,
+            second,
+            secondProtectedResult.Value!,
+            canary,
+            secondPurpose,
+            secondTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (!secondSelfResult.Succeeded)
+        {
+            return secondSelfResult.FailureKind is KeyRingFailureKind.Unprotect or KeyRingFailureKind.Protect
+                ? Failure(
+                    scenario,
+                    KeyRingFailureKind.Unprotect,
+                    "Isolation failed: the second provider could not complete its same-boundary control.")
+                : secondSelfResult;
+        }
+
         var firstCrossResult = await ExpectUnprotectFailureAsync(
             scenario,
-            second.Provider!,
+            second,
             firstProtectedResult.Value!,
             secondPurpose,
-            secondaryProviderFactory.Timeout,
+            secondTimeout,
             cancellationToken).ConfigureAwait(false);
         if (!firstCrossResult.Succeeded)
         {
@@ -289,10 +573,10 @@ public static class KeyRingVerifier
 
         return await ExpectUnprotectFailureAsync(
             scenario,
-            first.Provider!,
+            first,
             secondProtectedResult.Value!,
             firstPurpose,
-            providerFactory.Timeout,
+            firstTimeout,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -358,17 +642,94 @@ public static class KeyRingVerifier
             return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager could not create a new key.");
         }
 
+        if (rotationResult.Value is null)
+        {
+            return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager did not return a new key.");
+        }
+
+        var newKey = rotationResult.Value;
+        var observedKeys = await ExecuteBoundedAsync(
+            () => manager.Manager!.GetAllKeys(),
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (observedKeys.TimedOut)
+        {
+            return Failure(scenario, KeyRingFailureKind.Timeout, "Rotation key observation timed out before the configured bound.");
+        }
+        if (observedKeys.Canceled)
+        {
+            return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
+        }
+        if (observedKeys.Exception is not null || observedKeys.Value is null)
+        {
+            return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the supplied key manager could not expose the new key.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var keyIsObservedAndActive = observedKeys.Value.Any(key => key.KeyId == newKey.KeyId)
+            && newKey.ActivationDate <= now
+            && now < newKey.ExpirationDate;
+        if (!keyIsObservedAndActive)
+        {
+            return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the new key was not observed as active.");
+        }
+
+        DisposeProvider(first.Provider!);
         var second = await CreateProviderAsync(scenario, providerFactory, cancellationToken).ConfigureAwait(false);
         if (second.Failure is not null)
         {
             return second.Failure;
         }
 
-        return await UnprotectAndCompareAsync(
+        if (ReferenceEquals(first.Provider, second.Provider))
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.ProviderCreation,
+                "Provider creation failed: the rotation factory reused the same provider instance.");
+        }
+
+        var postRotationCanary = RandomNumberGenerator.GetBytes(32);
+        var postRotationProtector = await CreateProtectorAsync(
+            scenario,
+            second.Provider!,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (postRotationProtector.Failure is not null)
+        {
+            return postRotationProtector.Failure;
+        }
+
+        var postRotationProtected = await ProtectAsync(
+            scenario,
+            postRotationProtector.Value!,
+            postRotationCanary,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (postRotationProtected.Failure is not null)
+        {
+            return postRotationProtected.Failure;
+        }
+
+        var oldPayloadResult = await UnprotectAndCompareAsync(
             scenario,
             second.Provider!,
             protectedResult.Value!,
             canary,
+            SharedPurpose,
+            providerFactory.Timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (!oldPayloadResult.Succeeded)
+        {
+            return oldPayloadResult;
+        }
+
+        return await UnprotectAndCompareAsync(
+            scenario,
+            second.Provider!,
+            postRotationProtected.Value!,
+            postRotationCanary,
             SharedPurpose,
             providerFactory.Timeout,
             cancellationToken).ConfigureAwait(false);
@@ -426,6 +787,33 @@ public static class KeyRingVerifier
         }
 
         return (operation.Value, null);
+    }
+
+    private static async Task<(byte[]? Value, KeyRingVerificationResult? Failure)> ProtectWithPurposeAsync(
+        KeyRingScenario scenario,
+        IDataProtectionProvider provider,
+        byte[] canary,
+        string purpose,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var protectorResult = await CreateProtectorAsync(
+            scenario,
+            provider,
+            purpose,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (protectorResult.Failure is not null)
+        {
+            return (null, protectorResult.Failure);
+        }
+
+        return await ProtectAsync(
+            scenario,
+            protectorResult.Value!,
+            canary,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<KeyRingVerificationResult> UnprotectAndCompareAsync(
@@ -663,6 +1051,21 @@ public static class KeyRingVerifier
 
     private static KeyRingVerificationResult Failure(KeyRingScenario scenario, KeyRingFailureKind kind, string message) =>
         new(scenario, false, kind, message, TimeSpan.Zero);
+
+    private static void DisposeProvider(IDataProtectionProvider provider)
+    {
+        if (provider is IDisposable disposable)
+        {
+            try
+            {
+                disposable.Dispose();
+            }
+            catch
+            {
+                // Disposal is best effort; provider operation failures remain the verification result.
+            }
+        }
+    }
 }
 
 internal static class KeyRingScenarioExtensions

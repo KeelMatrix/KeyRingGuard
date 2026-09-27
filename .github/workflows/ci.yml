@@ -86,7 +86,6 @@ jobs:
         run: dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg --output ./artifacts/packages
 
       - name: Inspect package contents and icon
-        if: hashFiles('icon.png') != ''
         shell: pwsh
         run: pwsh -NoProfile -File scripts/Inspect-Package.ps1 -Version 0.1.0 -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.0.1.0.nupkg
 
