@@ -4,11 +4,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $contract = Join-Path $RepositoryRoot 'scripts' 'Test-ChangelogContract.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('keyringguard-changelog-contract-' + [Guid]::NewGuid().ToString('N'))
 
 function Invoke-Contract([string]$Root, [string]$Tag) {
-    $output = @(& pwsh -NoProfile -File $contract -Tag $Tag -RepositoryRoot $Root -ChangelogPath (Join-Path $Root 'CHANGELOG.md') -PackageVersionPath (Join-Path $Root 'Directory.Build.props') -CentralPackageVersionPath (Join-Path $Root 'Directory.Packages.props') 2>&1)
+    $output = @(Invoke-NestedPwsh -NoProfile -File $contract -Tag $Tag -RepositoryRoot $Root -ChangelogPath (Join-Path $Root 'CHANGELOG.md') -PackageVersionPath (Join-Path $Root 'Directory.Build.props') -CentralPackageVersionPath (Join-Path $Root 'Directory.Packages.props') 2>&1)
     [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine).Trim() }
 }
 

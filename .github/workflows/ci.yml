@@ -36,6 +36,14 @@ jobs:
         with:
           dotnet-version: 10.0.401
 
+      - name: Verify hidden child PowerShell launch guard
+        shell: pwsh
+        run: ./build/Test-NestedPwshLaunch.ps1 -SelfTest
+
+      - name: Scan repository child PowerShell launches
+        shell: pwsh
+        run: ./build/Test-NestedPwshLaunch.ps1
+
       - name: Restore from NuGet.org
         run: dotnet restore KeelMatrix.KeyRingGuard.sln --configfile NuGet.config --no-cache --force
 

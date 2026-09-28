@@ -4,10 +4,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $windowsPathSeparator = [char]92
 $separatorPattern = '(?:/|' + [regex]::Escape($windowsPathSeparator) + ')'
 $wordBoundary = [char]92 + 'b'
 $root = (Resolve-Path $RepositoryRoot).Path
+$launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
+& $launchGuard -SelfTest
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
+& $launchGuard
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
 $tracked = @(git -C $root ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate tracked files.' }
 $workflowPaths = @($tracked | Where-Object { $_ -match ('(^|' + $separatorPattern + ')[.]github' + $separatorPattern + 'workflows(' + $separatorPattern + '|$)') })
@@ -22,7 +28,7 @@ if ($workflowPaths.Count -gt 0) {
     }
 
     $workflowContract = Join-Path $root 'tests' 'VerifyReleaseWorkflowContract.ps1'
-    $contractOutput = @(& pwsh -NoProfile -File $workflowContract -WorkflowPath (Join-Path $root '.github' 'workflows' 'release.yml') 2>&1)
+    $contractOutput = @(Invoke-NestedPwsh -NoProfile -File $workflowContract -WorkflowPath (Join-Path $root '.github' 'workflows' 'release.yml') 2>&1)
     $contractExitCode = $LASTEXITCODE
     if ($contractExitCode -ne 0) {
         throw "The tracked release workflow did not pass its tag-only contract: $($contractOutput -join [Environment]::NewLine)"

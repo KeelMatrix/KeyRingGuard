@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $hygieneScript = Join-Path $RepositoryRoot 'scripts' 'Test-HistoryHygiene.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('keyringguard-history-contract-' + [Guid]::NewGuid().ToString('N'))
 
@@ -45,7 +46,7 @@ function Add-MergeCommit([string]$Fixture, [string]$Message) {
 }
 
 function Invoke-Hygiene([string]$Fixture) {
-    $output = @(& pwsh -NoProfile -File $hygieneScript -RepositoryRoot $Fixture 2>&1)
+    $output = @(Invoke-NestedPwsh -NoProfile -File $hygieneScript -RepositoryRoot $Fixture 2>&1)
     [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = ($output -join [Environment]::NewLine).Trim()

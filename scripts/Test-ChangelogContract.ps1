@@ -10,6 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $wordBoundary = [char]92 + 'b'
 $whitespace = [char]92 + 's'
 $literalOpenBracket = [char]92 + '['
@@ -43,7 +44,7 @@ foreach ($path in @($ChangelogPath, $PackageVersionPath, $CentralPackageVersionP
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Fail "Required release-contract file '$path' does not exist." }
 }
 
-$releaseVersion = (& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'GetReleaseVersion.ps1') -Tag $Tag | Out-String).Trim()
+$releaseVersion = (Invoke-NestedPwsh -NoProfile -File (Join-Path $PSScriptRoot 'GetReleaseVersion.ps1') -Tag $Tag | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseVersion)) { Fail "Release tag '$Tag' is invalid." }
 $releaseVersion = Get-CanonicalVersion $releaseVersion 'Release tag version'
 $packageVersion = Get-DeclaredVersion (Get-Content -Raw -LiteralPath $PackageVersionPath) 'Directory.Build.props'
