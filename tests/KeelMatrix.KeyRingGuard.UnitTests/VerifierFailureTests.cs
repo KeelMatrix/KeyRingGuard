@@ -442,7 +442,7 @@ public sealed class VerifierFailureTests
             TimeSpan.FromMilliseconds(40),
             (Func<CancellationToken, IKeyManager>)(_ => new SlowKeyManager()),
             static (manager, activationDate, expirationDate, cancellationToken) =>
-                Task.Run(() => manager.CreateNewKey(activationDate, expirationDate), cancellationToken));
+                Task.FromResult(manager.CreateNewKey(activationDate, expirationDate)));
 
         var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
 
