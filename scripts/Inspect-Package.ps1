@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $iconSource = Join-Path $repositoryRoot 'icon.png'
+$projectReadmePath = Join-Path $repositoryRoot 'src' 'KeelMatrix.KeyRingGuard' 'README.md'
 $iconSourcePresent = Test-Path -LiteralPath $iconSource -PathType Leaf
 if (-not $iconSourcePresent -and -not $AllowMissingIcon) {
     throw "Icon contract failed: required repository-root icon.png is missing: $iconSource"
@@ -60,6 +61,13 @@ try {
     $metadata = $nuspec.SelectSingleNode('/n:package/n:metadata', $namespace)
     if ($metadata.id -ne 'KeelMatrix.KeyRingGuard' -or $metadata.version -ne $Version) { throw 'Package identity or version is incorrect.' }
     if ($metadata.readme -ne 'README.md' -or $metadata.license.type -ne 'file' -or $metadata.license.InnerText -ne 'LICENSE') { throw 'README or license metadata is incorrect.' }
+    $readmeEntry = $archive.GetEntry('README.md')
+    $readmeReader = [System.IO.StreamReader]::new($readmeEntry.Open())
+    try { $packedReadme = $readmeReader.ReadToEnd() } finally { $readmeReader.Dispose() }
+    $projectReadme = [IO.File]::ReadAllText($projectReadmePath)
+    if (-not [string]::Equals($packedReadme, $projectReadme, [StringComparison]::Ordinal)) {
+        throw 'Package README differs from the project-local README that is declared as the package input.'
+    }
     $iconEntry = $archive.GetEntry('icon.png')
     if ($iconSourcePresent) {
         if ($metadata.icon -cne 'icon.png') { throw "Icon contract failed: nuspec <icon> must be 'icon.png'." }

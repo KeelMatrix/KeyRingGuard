@@ -38,12 +38,28 @@ $env:NUGET_PACKAGES = $packages
 try {
     $consumer = Join-Path $root 'tests' 'KeelMatrix.KeyRingGuard.PackageConsumer' 'KeelMatrix.KeyRingGuard.PackageConsumer.csproj'
     $consumerSourcePath = Join-Path $root 'tests' 'KeelMatrix.KeyRingGuard.PackageConsumer' 'Program.cs'
-    $usage = Get-Content -Raw -LiteralPath (Join-Path $root 'docs' 'usage.md')
     $lineBreak = '(?:' + [char]13 + ')?' + [char]10
     $quickStartPattern = '(?ms)^## Quick Start' + $lineBreak + '.*?^```csharp' + $lineBreak + '(?<snippet>.*?)^```'
-    $quickStart = [regex]::Match($usage, $quickStartPattern)
-    if (-not $quickStart.Success) { throw 'Could not locate the documented Quick Start C# snippet.' }
-    $documentedSnippet = ($quickStart.Groups['snippet'].Value -replace "`r`n", "`n").TrimEnd([char]10)
+    $quickStartSources = @(
+        (Join-Path $root 'README.md')
+        (Join-Path $root 'docs' 'usage.md')
+        (Join-Path $root 'src' 'KeelMatrix.KeyRingGuard' 'README.md')
+    )
+    $documentedSnippets = foreach ($quickStartSource in $quickStartSources) {
+        $document = Get-Content -Raw -LiteralPath $quickStartSource -Encoding utf8
+        $quickStart = [regex]::Match($document, $quickStartPattern)
+        if (-not $quickStart.Success) { throw "Could not locate the documented Quick Start C# snippet in $quickStartSource." }
+        [pscustomobject]@{
+            Path = $quickStartSource
+            Snippet = ($quickStart.Groups['snippet'].Value -replace "`r`n", "`n").TrimEnd([char]10)
+        }
+    }
+    $documentedSnippet = $documentedSnippets[0].Snippet
+    foreach ($documented in $documentedSnippets) {
+        if (-not [string]::Equals($documented.Snippet, $documentedSnippet, [StringComparison]::Ordinal)) {
+            throw "The Quick Start snippet in $($documented.Path) must match the other shipped Quick Start snippets verbatim."
+        }
+    }
     $consumerSource = (Get-Content -Raw -LiteralPath $consumerSourcePath -ErrorAction Stop -Encoding utf8) -replace "`r`n", "`n"
     $consumerSource = $consumerSource.TrimEnd([char]10)
     if (-not [string]::Equals($consumerSource, $documentedSnippet, [StringComparison]::Ordinal)) {

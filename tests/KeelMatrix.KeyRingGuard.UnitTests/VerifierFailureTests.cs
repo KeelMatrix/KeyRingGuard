@@ -556,6 +556,38 @@ public sealed class VerifierFailureTests
         Assert.True(result.Succeeded, result.Message);
     }
 
+    [Theory]
+    [InlineData(31)]
+    [InlineData(32)]
+    [InlineData(33)]
+    public async Task ConcurrentRotationsCompleteBelowAtAndAboveSchedulerCapacity(int concurrentVerifications)
+    {
+        var factories = Enumerable.Range(0, concurrentVerifications)
+            .Select(_ => CreateFastRotationFactory())
+            .ToArray();
+
+        var results = await Task.WhenAll(
+                factories.Select(factory => KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory)))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.All(results, result => Assert.True(result.Succeeded, result.Message));
+    }
+
+    [Fact]
+    public async Task AFailedRotationDoesNotStarveOtherRotationsAtCapacity()
+    {
+        var factories = Enumerable.Range(0, 32)
+            .Select(index => CreateFastRotationFactory(index == 0))
+            .ToArray();
+
+        var results = await Task.WhenAll(
+                factories.Select(factory => KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory)))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(KeyRingFailureKind.RotationFailure, results[0].FailureKind);
+        Assert.Equal(31, results.Count(result => result.Succeeded));
+    }
+
     [Fact]
     public async Task AsyncRotationCallbackHonorsCallerCancellation()
     {
@@ -584,6 +616,29 @@ public sealed class VerifierFailureTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(KeyRingFailureKind.Canceled, result.FailureKind);
+    }
+
+    private static KeyRingProviderFactory CreateFastRotationFactory(bool failRotation = false)
+    {
+        var manager = new ThreadScopedRotationKeyManager();
+        return new KeyRingProviderFactory(
+            _ => new FakeProvider(
+                protect: payload => manager.CreatedKey is { } key
+                    ? CreateProtectedPayload(payload, key.KeyId)
+                    : payload.ToArray(),
+                unprotect: UnprotectPayload),
+            TimeSpan.FromSeconds(2),
+            _ => manager,
+            (keyManager, activationDate, expirationDate, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (failRotation)
+                {
+                    throw new InvalidOperationException("rotation callback failure");
+                }
+
+                return Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate));
+            });
     }
 
     [Theory]

@@ -163,6 +163,7 @@ try {
         @{ Name = 'ambiguous-account-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Account <account@users.noreply.github.com>') -join [Environment]::NewLine }
         @{ Name = 'ambiguous-pipeline-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Pipeline <pipeline@ci.example.org>') -join [Environment]::NewLine }
         @{ Name = 'ambiguous-service-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Service <service@automation.example.org>') -join [Environment]::NewLine }
+        @{ Name = 'internal-task-id'; Message = 'Fix KEE-1234 behavior' }
     )
 
     foreach ($fixtureSpec in $fixtures) {
@@ -186,7 +187,7 @@ try {
         if ($result.ExitCode -eq 0) { throw "$($fixtureSpec.Name) fixture must fail history hygiene." }
     }
 
-    Write-Output 'History hygiene contract: PASS (clean, company-attributed, human, CI, address-only, separator, subject, side-branch, tag-only and merge fixtures behave as required).'
+    Write-Output 'History hygiene contract: PASS (clean, company-attributed, human, CI, task-ID, address-only, separator, subject, side-branch, tag-only and merge fixtures behave as required).'
     exit 0
 }
 finally {

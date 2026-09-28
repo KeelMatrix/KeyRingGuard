@@ -251,17 +251,27 @@ public sealed class KeyRingProviderFactory
         DateTimeOffset activationDate,
         DateTimeOffset expirationDate,
         Func<IKeyManager, HashSet<Guid>> snapshotKeyIds,
-        CancellationToken cancellationToken) =>
-        _createNewKey is null
-            ? Task.FromException<(HashSet<Guid> ExistingKeyIds, IKey NewKey)>(new InvalidOperationException())
-            : KeyRingOperationScheduler.RunAsync(
-                async () =>
-                {
-                    var existingKeyIds = snapshotKeyIds(manager);
-                    var newKey = await _createNewKey(manager, activationDate, expirationDate, cancellationToken).ConfigureAwait(false);
-                    return (existingKeyIds, newKey);
-                },
-                cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        if (_createNewKey is null)
+        {
+            return Task.FromException<(HashSet<Guid> ExistingKeyIds, IKey NewKey)>(new InvalidOperationException());
+        }
+
+        return CreateNewKeyWithSnapshotCoreAsync(manager, activationDate, expirationDate, snapshotKeyIds, cancellationToken);
+    }
+
+    private async Task<(HashSet<Guid> ExistingKeyIds, IKey NewKey)> CreateNewKeyWithSnapshotCoreAsync(
+        IKeyManager manager,
+        DateTimeOffset activationDate,
+        DateTimeOffset expirationDate,
+        Func<IKeyManager, HashSet<Guid>> snapshotKeyIds,
+        CancellationToken cancellationToken)
+    {
+        var existingKeyIds = snapshotKeyIds(manager);
+        var newKey = await _createNewKey!(manager, activationDate, expirationDate, cancellationToken).ConfigureAwait(false);
+        return (existingKeyIds, newKey);
+    }
 
     private static TimeSpan ValidateTimeout(TimeSpan timeout)
     {

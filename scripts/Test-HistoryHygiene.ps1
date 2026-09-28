@@ -60,7 +60,10 @@ $forbiddenTerms = @(
     ('paper' + 'clip')
 )
 $forbiddenAlternatives = @($forbiddenTerms | ForEach-Object { [regex]::Escape($_) })
-$forbiddenHistoryPattern = '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$forbiddenAlternatives) + ')(?![A-Za-z])'
+$forbiddenHistoryPatterns = @(
+    '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$forbiddenAlternatives) + ')(?![A-Za-z])'
+    '(?i)(?<![A-Za-z0-9])KEE-[0-9]+(?![A-Za-z0-9])'
+)
 $inlineWhitespaceCharacters = [char[]] @([char]9, [char]11, [char]12, [char]32, [char]160, [char]0x3000)
 $inlineWhitespaceClass = '[' + [string]::Concat($inlineWhitespaceCharacters) + ']*'
 $lineBreakCharacters = [string]::Concat([char]13, [char]10)
@@ -203,9 +206,11 @@ foreach ($commit in $commits) {
         }
     }
 
-    $forbiddenMatch = [regex]::Match($message, $forbiddenHistoryPattern)
-    if ($forbiddenMatch.Success) {
-        throw "Commit $commit (refs: $refDescription) contains prohibited history wording '$($forbiddenMatch.Value)'."
+    foreach ($forbiddenHistoryPattern in $forbiddenHistoryPatterns) {
+        $forbiddenMatch = [regex]::Match($message, $forbiddenHistoryPattern)
+        if ($forbiddenMatch.Success) {
+            throw "Commit $commit (refs: $refDescription) contains prohibited history wording '$($forbiddenMatch.Value).'"
+        }
     }
 }
 
@@ -219,4 +224,4 @@ foreach ($relativePath in $tracked) {
     }
 }
 
-Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable commit refs, subjects and bodies; unambiguous automation identities and CI product phrases are rejected directly, while ambiguous human-name identities require a machine-signaled email; form feed and vertical tab are accepted as label separators; annotated tag messages and Git notes are not scanned; split, encoded and obfuscated forms are not detected.)'
+Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable commit refs, subjects and bodies; internal task identifiers, unambiguous automation identities and CI product phrases are rejected directly, while ambiguous human-name identities require a machine-signaled email; form feed and vertical tab are accepted as label separators; annotated tag messages and Git notes are not scanned; split, encoded and obfuscated forms are not detected.)'
