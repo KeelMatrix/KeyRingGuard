@@ -56,6 +56,8 @@ function Invoke-Hygiene([string]$Fixture) {
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 try {
     $clean = New-Fixture 'clean' 'Keep history clean'
+    git -C $clean tag --annotate --message 'Clean release tag' clean-release HEAD
+    git -C $clean notes --ref=contract add --message 'Clean release note' HEAD
     $result = Invoke-Hygiene $clean
     if ($result.ExitCode -ne 0) { throw "A clean history should pass history hygiene: $($result.Output)" }
 
@@ -148,6 +150,7 @@ try {
         @{ Name = 'github-actions'; Message = @('Fixture history', '', 'Signed-off-by: GitHub Actions <person@example.org>') -join [Environment]::NewLine }
         @{ Name = 'co-author'; Message = @('Fixture history', '', 'co_author: KeelMatrix') -join [Environment]::NewLine }
         @{ Name = 'subject-only'; Message = $automationIdentity + ' in the subject' }
+        @{ Name = 'internal-process-wording'; Message = ('Cover ' + 'internal ' + 'task IDs in history checks') }
         @{ Name = 'bad-trailer'; Message = @('Fixture history', '', ('Co-Authored' + '-By: NotKeelMatrix <noreply@example.invalid>')) -join [Environment]::NewLine; SideBranch = $true }
         @{ Name = 'internal-wrong-email'; Message = @('Fixture history', '', ('Co-Authored' + '-By: ' + ('Paper' + 'clip') + ' <paperclip@example.invalid>')) -join [Environment]::NewLine; SideBranch = $true }
         @{ Name = 'merge-commit'; Message = @('Merge side branch', '', ('Signed-off-by: ' + $automationBotIdentity + ' <noreply@example.invalid>')) -join [Environment]::NewLine; Merge = $true }
@@ -163,7 +166,11 @@ try {
         @{ Name = 'ambiguous-account-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Account <account@users.noreply.github.com>') -join [Environment]::NewLine }
         @{ Name = 'ambiguous-pipeline-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Pipeline <pipeline@ci.example.org>') -join [Environment]::NewLine }
         @{ Name = 'ambiguous-service-machine-email'; Message = @('Fixture history', '', 'Signed-off-by: Service <service@automation.example.org>') -join [Environment]::NewLine }
-        @{ Name = 'internal-task-id'; Message = 'Fix KEE-1234 behavior' }
+        @{ Name = 'internal-task-id'; Message = ('Fix ' + 'KEE-' + '1234 behavior') }
+        @{ Name = 'annotated-tag-message'; Message = ('Release ' + 'KEE-' + '1234'); AnnotatedTag = $true }
+        @{ Name = 'tag-name'; Message = 'Clean fixture history'; TagName = ('release-' + 'KEE-' + '1234') }
+        @{ Name = 'note-content'; Message = ('Note for ' + 'KEE-' + '1234'); Note = $true }
+        @{ Name = 'ref-name'; Message = 'Clean fixture history'; RefName = ('kee-' + '1234-side') }
     )
 
     foreach ($fixtureSpec in $fixtures) {
@@ -182,12 +189,25 @@ try {
             Add-Commit $fixture $fixtureSpec.Message 'author-side' 'External Contributor'
             Restore-Main $fixture
         }
+        if ($fixtureSpec.AnnotatedTag) {
+            git -C $fixture tag --annotate --message $fixtureSpec.Message annotated-fixture HEAD
+        }
+        if ($fixtureSpec.TagName) {
+            git -C $fixture tag $fixtureSpec.TagName HEAD
+        }
+        if ($fixtureSpec.Note) {
+            git -C $fixture notes --ref=contract add --message $fixtureSpec.Message HEAD
+        }
+        if ($fixtureSpec.RefName) {
+            Add-Commit $fixture $fixtureSpec.Message $fixtureSpec.RefName
+            Restore-Main $fixture
+        }
 
         $result = Invoke-Hygiene $fixture
         if ($result.ExitCode -eq 0) { throw "$($fixtureSpec.Name) fixture must fail history hygiene." }
     }
 
-    Write-Output 'History hygiene contract: PASS (clean, company-attributed, human, CI, task-ID, address-only, separator, subject, side-branch, tag-only and merge fixtures behave as required).'
+    Write-Output 'History hygiene contract: PASS (clean, company-attributed, human, CI, task-ID, address-only, separator, subject, side-branch, tag, note and merge fixtures behave as required).'
     exit 0
 }
 finally {

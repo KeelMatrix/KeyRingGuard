@@ -287,6 +287,9 @@ public sealed class KeyRingProviderFactory
 internal static class KeyRingOperationScheduler
 {
     private static readonly SemaphoreSlim Slots = new(32, 32);
+    private static readonly AsyncLocal<int> CallbackDepth = new();
+
+    internal static bool IsInsideCallback => CallbackDepth.Value > 0;
 
     internal static Task<T> Run<T>(Func<T> operation, CancellationToken startCancellationToken) =>
         RunCoreAsync(operation, startCancellationToken);
@@ -303,7 +306,7 @@ internal static class KeyRingOperationScheduler
         {
             startCancellationToken.ThrowIfCancellationRequested();
             return await Task.Factory.StartNew(
-                operation,
+                () => InvokeCallback(operation),
                 CancellationToken.None,
                 TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
                 TaskScheduler.Default).ConfigureAwait(false);
@@ -323,7 +326,7 @@ internal static class KeyRingOperationScheduler
         {
             startCancellationToken.ThrowIfCancellationRequested();
             return await Task.Factory.StartNew(
-                    operation,
+                    () => InvokeCallbackAsync(operation),
                     CancellationToken.None,
                     TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
                     TaskScheduler.Default)
@@ -333,6 +336,34 @@ internal static class KeyRingOperationScheduler
         finally
         {
             Slots.Release();
+        }
+    }
+
+    private static T InvokeCallback<T>(Func<T> operation)
+    {
+        var previousDepth = CallbackDepth.Value;
+        CallbackDepth.Value = previousDepth + 1;
+        try
+        {
+            return operation();
+        }
+        finally
+        {
+            CallbackDepth.Value = previousDepth;
+        }
+    }
+
+    private static async Task<T> InvokeCallbackAsync<T>(Func<Task<T>> operation)
+    {
+        var previousDepth = CallbackDepth.Value;
+        CallbackDepth.Value = previousDepth + 1;
+        try
+        {
+            return await operation().ConfigureAwait(false);
+        }
+        finally
+        {
+            CallbackDepth.Value = previousDepth;
         }
     }
 }

@@ -62,6 +62,14 @@ public static class KeyRingVerifier
         ArgumentNullException.ThrowIfNull(scenario);
         ArgumentNullException.ThrowIfNull(providerFactory);
 
+        if (KeyRingOperationScheduler.IsInsideCallback)
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.InvalidScenario,
+                "Verification cannot be started from a provider, key-manager, or rotation callback.");
+        }
+
         var stopwatch = Stopwatch.StartNew();
         var canary = RandomNumberGenerator.GetBytes(32);
         using var providerScope = new ProviderScope();

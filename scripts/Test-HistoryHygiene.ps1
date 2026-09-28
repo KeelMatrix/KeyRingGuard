@@ -63,7 +63,42 @@ $forbiddenAlternatives = @($forbiddenTerms | ForEach-Object { [regex]::Escape($_
 $forbiddenHistoryPatterns = @(
     '(?i)(?<![A-Za-z])(?:' + [string]::Join('|', [string[]]$forbiddenAlternatives) + ')(?![A-Za-z])'
     '(?i)(?<![A-Za-z0-9])KEE-[0-9]+(?![A-Za-z0-9])'
+    '(?i)(?<![A-Za-z])internal[ -]+tasks?(?![A-Za-z])'
 )
+
+function Assert-PublicHistoryText([string]$text, [string]$location) {
+    foreach ($forbiddenHistoryPattern in $forbiddenHistoryPatterns) {
+        $forbiddenMatch = [regex]::Match($text, $forbiddenHistoryPattern)
+        if ($forbiddenMatch.Success) {
+            throw "$location contains prohibited history wording '$($forbiddenMatch.Value).'"
+        }
+    }
+}
+
+foreach ($ref in $refs) {
+    Assert-PublicHistoryText $ref "Repository ref '$ref'"
+}
+
+foreach ($tagRef in @($refs | Where-Object { $_ -like 'refs/tags/*' })) {
+    $tagType = (git -C $root cat-file -t $tagRef) -join ''
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect tag ref $tagRef." }
+    if ($tagType -eq 'tag') {
+        $tagContents = (git -C $root cat-file tag $tagRef) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0) { throw "Could not inspect annotated tag $tagRef." }
+        Assert-PublicHistoryText $tagContents "Annotated tag '$tagRef'"
+    }
+}
+
+foreach ($noteRef in @($refs | Where-Object { $_ -like 'refs/notes/*' })) {
+    $noteBlobs = @(git -C $root ls-tree -r --format='%(objectname)' $noteRef)
+    if ($LASTEXITCODE -ne 0) { throw "Could not enumerate notes reachable from $noteRef." }
+    foreach ($noteBlob in $noteBlobs) {
+        $noteContents = (git -C $root cat-file blob $noteBlob) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0) { throw "Could not inspect note $noteBlob from $noteRef." }
+        Assert-PublicHistoryText $noteContents "Git note '$noteBlob' from '$noteRef'"
+    }
+}
+
 $inlineWhitespaceCharacters = [char[]] @([char]9, [char]11, [char]12, [char]32, [char]160, [char]0x3000)
 $inlineWhitespaceClass = '[' + [string]::Concat($inlineWhitespaceCharacters) + ']*'
 $lineBreakCharacters = [string]::Concat([char]13, [char]10)
@@ -206,12 +241,7 @@ foreach ($commit in $commits) {
         }
     }
 
-    foreach ($forbiddenHistoryPattern in $forbiddenHistoryPatterns) {
-        $forbiddenMatch = [regex]::Match($message, $forbiddenHistoryPattern)
-        if ($forbiddenMatch.Success) {
-            throw "Commit $commit (refs: $refDescription) contains prohibited history wording '$($forbiddenMatch.Value).'"
-        }
-    }
+    Assert-PublicHistoryText $message "Commit $commit (refs: $refDescription)"
 }
 
 foreach ($relativePath in $tracked) {
@@ -224,4 +254,4 @@ foreach ($relativePath in $tracked) {
     }
 }
 
-Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable commit refs, subjects and bodies; internal task identifiers, unambiguous automation identities and CI product phrases are rejected directly, while ambiguous human-name identities require a machine-signaled email; form feed and vertical tab are accepted as label separators; annotated tag messages and Git notes are not scanned; split, encoded and obfuscated forms are not detected.)'
+Write-Output 'History and workspace hygiene: PASS (case-insensitive attribution checks cover reachable commit refs, subjects and bodies, repository ref names, annotated tag messages and Git notes; internal task identifiers, unambiguous automation identities and CI product phrases are rejected directly, while ambiguous human-name identities require a machine-signaled email; form feed and vertical tab are accepted as label separators; split, encoded and obfuscated forms are not detected.)'

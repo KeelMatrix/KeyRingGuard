@@ -6,6 +6,7 @@ This changelog records consumer-facing changes to KeelMatrix.KeyRingGuard.
 
 ### Fixed
 
+- Rejects nested KeyRingGuard verification from provider, key-manager, and rotation callbacks before scheduler admission, preserving the bounded scheduler at capacity.
 - Keeps providers alive until timed-out callbacks finish and removes canceled callbacks before scheduler admission, preventing disposal races and queued-work retention.
 - Classifies queue-admission timeouts separately from caller cancellation and validates rotation against a genuinely new key plus exactly one matching, active, non-revoked observed key.
 - Adds end-to-end filesystem coverage for successful asynchronous provider, key-manager, and rotation callbacks, while preserving sanitized async failure handling.
