@@ -8,6 +8,14 @@ namespace KeelMatrix.KeyRingGuard;
 /// Each synchronous or asynchronous operation is observed with the configured bound by the verifier.
 /// A provider remains alive until its scheduled callbacks finish, including callbacks that outlive a timeout.
 /// </summary>
+/// <remarks>
+/// Provider, key-manager, and rotation callbacks run through a bounded scheduler with 32 callback slots.
+/// A verification started on a callback's own execution flow is rejected before scheduler admission with
+/// <see cref="KeyRingFailureKind.InvalidScenario"/>. This attribution follows the flowed execution context;
+/// a callback that deliberately severs that context with <c>ExecutionContext.SuppressFlow</c>,
+/// <c>ThreadPool.UnsafeQueueUserWorkItem</c>, or a new <see cref="Thread"/> is outside that guard and is
+/// unsupported. Scheduler admission honors the caller's cancellation token.
+/// </remarks>
 public sealed class KeyRingProviderFactory
 {
     private readonly Func<CancellationToken, IDataProtectionProvider>? _createProvider;

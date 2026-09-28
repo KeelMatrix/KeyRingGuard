@@ -21,6 +21,14 @@ public static class KeyRingVerifier
     /// <param name="secondaryProviderFactory">The second factory required by replica and application-isolation scenarios.</param>
     /// <param name="cancellationToken">Cancels provider creation and verification operations.</param>
     /// <returns>A structured result that never includes key material, canaries, or raw provider exceptions.</returns>
+    /// <remarks>
+    /// A verification started on a provider, key-manager, or rotation callback's own execution flow returns
+    /// <see cref="KeyRingFailureKind.InvalidScenario"/> before scheduler admission. The guard follows flowed
+    /// execution context; a callback that deliberately severs it with <c>ExecutionContext.SuppressFlow</c>,
+    /// <c>ThreadPool.UnsafeQueueUserWorkItem</c>, or a new <see cref="Thread"/> is outside the guard and is
+    /// unsupported. The shared scheduler has 32 callback slots and honors <paramref name="cancellationToken"/>
+    /// while admitting queued work.
+    /// </remarks>
     public static async Task<KeyRingVerificationResult> VerifyAsync(
         KeyRingScenario scenario,
         KeyRingProviderFactory providerFactory,
@@ -44,6 +52,11 @@ public static class KeyRingVerifier
     /// <param name="isolationControl">The same-boundary control required by application isolation.</param>
     /// <param name="cancellationToken">Cancels provider creation and verification operations.</param>
     /// <returns>A structured result that never includes key material, canaries, or raw provider exceptions.</returns>
+    /// <remarks>
+    /// This entry point has the same callback re-entry boundary as <see cref="VerifyAsync"/>: a verification
+    /// started on a callback's flowed execution context returns <see cref="KeyRingFailureKind.InvalidScenario"/>
+    /// before scheduler admission, while deliberately severed execution-context flow is outside the guard.
+    /// </remarks>
     public static Task<KeyRingVerificationResult> VerifyWithIsolationControlAsync(
         KeyRingScenario scenario,
         KeyRingProviderFactory providerFactory,
@@ -790,7 +803,16 @@ public static class KeyRingVerifier
             return postRotationProtected.Failure;
         }
 
-        if (!PayloadUsesKey(postRotationProtected.Value!, observedKey.Value.KeyId))
+        var payloadFormat = InspectPayloadFormat(postRotationProtected.Value!, observedKey.Value.KeyId);
+        if (payloadFormat == RotationPayloadFormat.Unsupported)
+        {
+            return Failure(
+                scenario,
+                KeyRingFailureKind.RotationUnavailable,
+                "Rotation unavailable: the recreated provider returned a payload outside the standard ASP.NET Core Data Protection payload format, so key adoption could not be verified.");
+        }
+
+        if (payloadFormat == RotationPayloadFormat.StandardButDifferentKey)
         {
             return Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the recreated provider did not adopt the observed active key.");
         }
@@ -867,7 +889,7 @@ public static class KeyRingVerifier
         return new RotationObservation(keyId, active);
     }
 
-    private static bool PayloadUsesKey(byte[] protectedPayload, Guid keyId)
+    private static RotationPayloadFormat InspectPayloadFormat(byte[] protectedPayload, Guid keyId)
     {
         if (protectedPayload.Length < 20
             || protectedPayload[0] != 0x09
@@ -875,7 +897,7 @@ public static class KeyRingVerifier
             || protectedPayload[2] != 0xC9
             || protectedPayload[3] != 0xF0)
         {
-            return false;
+            return RotationPayloadFormat.Unsupported;
         }
 
         var payloadKey = protectedPayload.AsSpan(4, 16);
@@ -883,7 +905,16 @@ public static class KeyRingVerifier
         Span<byte> bigEndianKey = stackalloc byte[16];
         keyId.TryWriteBytes(littleEndianKey);
         keyId.TryWriteBytes(bigEndianKey, bigEndian: true, out _);
-        return payloadKey.SequenceEqual(littleEndianKey) || payloadKey.SequenceEqual(bigEndianKey);
+        return payloadKey.SequenceEqual(littleEndianKey) || payloadKey.SequenceEqual(bigEndianKey)
+            ? RotationPayloadFormat.StandardWithExpectedKey
+            : RotationPayloadFormat.StandardButDifferentKey;
+    }
+
+    private enum RotationPayloadFormat
+    {
+        Unsupported,
+        StandardButDifferentKey,
+        StandardWithExpectedKey,
     }
 
     private readonly record struct RotationObservation(Guid KeyId, bool Value);

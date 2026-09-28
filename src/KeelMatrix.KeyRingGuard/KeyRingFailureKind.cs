@@ -46,7 +46,8 @@ public enum KeyRingFailureKind
     Canceled,
 
     /// <summary>
-    /// Rotation was requested without a caller-supplied key-manager factory.
+    /// Rotation cannot verify key adoption because the required caller-supplied factories are missing
+    /// or the recreated provider did not return the standard ASP.NET Core Data Protection payload format.
     /// </summary>
     RotationUnavailable,
 

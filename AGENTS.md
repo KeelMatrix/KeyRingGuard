@@ -28,7 +28,7 @@ pwsh ./scripts/Invoke-LocalGate.ps1
 - Application-isolation factories must share an explicit `KeyRingBoundary` identity with their control factories.
 - Verification uses synthetic, ephemeral canaries and fixed diagnostics. It never reads, writes, or emits key XML or master key material.
 - No verifier operation deletes or revokes keys. Rotation verification requires explicitly supplied linked key-manager and cancellation-aware key-creation factories, snapshots opaque key IDs and invokes the callback in one bounded scheduled operation after setup succeeds, rejects pre-existing/no-op key returns, and uses a dedicated test store.
-- Provider, key-manager, and rotation callbacks must not start nested KeyRingGuard verification; re-entry returns `InvalidScenario` before scheduler admission so the bounded scheduler remains safe at capacity.
+- Provider, key-manager, and rotation callbacks run through 32 bounded scheduler slots. A nested KeyRingGuard verification started on the callback's own flowed execution context returns `InvalidScenario` before scheduler admission, and queued admission honors the caller's cancellation token. A callback that deliberately severs flow with `ExecutionContext.SuppressFlow`, `ThreadPool.UnsafeQueueUserWorkItem`, or a new thread is outside this guard and unsupported.
 - The package has no network behavior and no telemetry dependency. A caller-supplied provider factory may use a network-backed store.
 - Test projects and the package consumer are not packable and must not become package dependencies.
 - Readiness packaging allows the founder-owned root icon to be absent and verifies it whenever present; release packaging passes `RequirePackageIcon=true` and fails closed when the icon is absent.

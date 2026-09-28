@@ -341,6 +341,7 @@ public sealed class VerifierFailureTests
     public async Task QueuedSynchronousProtectTimeoutIsReportedAsTimeout()
     {
         using var release = new ManualResetEventSlim();
+        using var capacityObserved = new ManualResetEventSlim();
         var started = 0;
         Task[] blockers = [];
         var blockerFactory = new KeyRingProviderFactory(
@@ -354,19 +355,31 @@ public sealed class VerifierFailureTests
         var provider = new FakeProvider(
             createProtector: _ =>
             {
-                blockers = Enumerable.Range(0, 64)
-                    .Select(_ => KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, blockerFactory))
-                    .ToArray();
-                Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 31, TimeSpan.FromSeconds(5)));
+                using (ExecutionContext.SuppressFlow())
+                {
+                    blockers = Enumerable.Range(0, 64)
+                        .Select(_ => Task.Run(() => KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, blockerFactory)))
+                        .ToArray();
+                }
+
+                if (SpinWait.SpinUntil(() => Volatile.Read(ref started) >= 30, TimeSpan.FromSeconds(5)))
+                {
+                    capacityObserved.Set();
+                }
+
                 return new FakeProtector(null, payload => payload);
             });
-        var targetFactory = new KeyRingProviderFactory(_ => provider, TimeSpan.FromMilliseconds(40));
+        var targetFactory = new KeyRingProviderFactory(_ => provider, TimeSpan.FromMilliseconds(500));
 
         try
         {
             var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, targetFactory);
 
             Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+            Assert.True(
+                capacityObserved.Wait(TimeSpan.FromSeconds(2)),
+                $"started={Volatile.Read(ref started)}, blockers={blockers.Length}");
+            Assert.InRange(Volatile.Read(ref started), 30, 32);
         }
         finally
         {
@@ -581,8 +594,9 @@ public sealed class VerifierFailureTests
     public async Task NestedVerificationFromRotationCallbacksFailsClosedWithoutSchedulerDeadlock(int concurrentVerifications)
     {
         var nestedResults = new ConcurrentBag<KeyRingVerificationResult>();
+        var nestedFactoryInvocations = 0;
         var factories = Enumerable.Range(0, concurrentVerifications)
-            .Select(_ => CreateReentrantRotationFactory(nestedResults))
+            .Select(_ => CreateReentrantRotationFactory(nestedResults, () => Interlocked.Increment(ref nestedFactoryInvocations)))
             .ToArray();
 
         var results = await Task.WhenAll(
@@ -601,6 +615,127 @@ public sealed class VerifierFailureTests
                     "Verification cannot be started from a provider, key-manager, or rotation callback.",
                     result.Message);
             });
+        Assert.Equal(0, Volatile.Read(ref nestedFactoryInvocations));
+
+        var followUpResults = await Task.WhenAll(
+                Enumerable.Range(0, 33)
+                    .Select(_ => KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, CreateFastRotationFactory())))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.All(followUpResults, result => Assert.True(result.Succeeded, result.Message));
+    }
+
+    [Theory]
+    [InlineData(31)]
+    [InlineData(32)]
+    [InlineData(33)]
+    public async Task SuppressedContextNestedVerificationCompletesWithinBoundAndLeavesSchedulerUsable(int concurrentVerifications)
+    {
+        var factories = Enumerable.Range(0, concurrentVerifications)
+            .Select(_ => CreateSuppressedContextReentrantRotationFactory())
+            .ToArray();
+
+        var results = await Task.WhenAll(
+                factories.Select(factory => KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory)))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(results.Length == concurrentVerifications);
+
+        var followUpResults = await Task.WhenAll(
+                Enumerable.Range(0, 33)
+                    .Select(_ => KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, CreateFastRotationFactory())))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.All(followUpResults, result => Assert.True(result.Succeeded, result.Message));
+    }
+
+    [Theory]
+    [InlineData("provider-sync", 31)]
+    [InlineData("provider-sync", 32)]
+    [InlineData("provider-sync", 33)]
+    [InlineData("provider-async", 31)]
+    [InlineData("provider-async", 32)]
+    [InlineData("provider-async", 33)]
+    [InlineData("create-protector", 31)]
+    [InlineData("create-protector", 32)]
+    [InlineData("create-protector", 33)]
+    [InlineData("protect", 31)]
+    [InlineData("protect", 32)]
+    [InlineData("protect", 33)]
+    [InlineData("unprotect", 31)]
+    [InlineData("unprotect", 32)]
+    [InlineData("unprotect", 33)]
+    [InlineData("key-manager-sync", 31)]
+    [InlineData("key-manager-sync", 32)]
+    [InlineData("key-manager-sync", 33)]
+    [InlineData("key-manager-async", 31)]
+    [InlineData("key-manager-async", 32)]
+    [InlineData("key-manager-async", 33)]
+    [InlineData("rotation-sync", 31)]
+    [InlineData("rotation-sync", 32)]
+    [InlineData("rotation-sync", 33)]
+    [InlineData("rotation-async", 31)]
+    [InlineData("rotation-async", 32)]
+    [InlineData("rotation-async", 33)]
+    public async Task NestedVerificationFromEveryCallbackIsRejectedBeforeAdmission(string callbackKind, int concurrentVerifications)
+    {
+        var probes = Enumerable.Range(0, concurrentVerifications).Select(_ => new ReentryProbe()).ToArray();
+        var factories = probes.Select(probe => CreateReentryFactory(callbackKind, probe)).ToArray();
+        var scenario = callbackKind is "key-manager-sync" or "key-manager-async" or "rotation-sync" or "rotation-async"
+            ? KeyRingScenario.RotationContinuity
+            : KeyRingScenario.RestartContinuity;
+
+        var results = await Task.WhenAll(
+                factories.Select(factory => KeyRingVerifier.VerifyAsync(scenario, factory)))
+            .WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.True(results.Length == concurrentVerifications);
+        Assert.All(results, result => Assert.True(result.Succeeded, result.Message));
+        Assert.All(probes, probe =>
+        {
+            var nestedResult = Assert.Single(probe.NestedResults);
+            Assert.False(nestedResult.Succeeded);
+            Assert.Equal(KeyRingFailureKind.InvalidScenario, nestedResult.FailureKind);
+            Assert.Equal(
+                "Verification cannot be started from a provider, key-manager, or rotation callback.",
+                nestedResult.Message);
+            Assert.Equal(0, Volatile.Read(ref probe.NestedFactoryInvocations));
+        });
+    }
+
+    [Fact]
+    public async Task FaultedCanceledAndTimedOutNestedCallsAreRejectedBeforeAdmission()
+    {
+        var probe = new NestedOutcomeProbe();
+        var manager = new ThreadScopedRotationKeyManager();
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(
+                protect: payload => manager.CreatedKey is { } key
+                    ? CreateProtectedPayload(payload, key.KeyId)
+                    : payload.ToArray(),
+                unprotect: UnprotectPayload),
+            TimeSpan.FromSeconds(2),
+            _ => manager,
+            async (keyManager, activationDate, expirationDate, cancellationToken) =>
+            {
+                await probe.RunAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                return keyManager.CreateNewKey(activationDate, expirationDate);
+            });
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(3, probe.Results.Count);
+        Assert.All(probe.Results, nestedResult =>
+        {
+            Assert.False(nestedResult.Succeeded);
+            Assert.Equal(KeyRingFailureKind.InvalidScenario, nestedResult.FailureKind);
+            Assert.Equal(
+                "Verification cannot be started from a provider, key-manager, or rotation callback.",
+                nestedResult.Message);
+        });
+        Assert.Equal(0, Volatile.Read(ref probe.NestedFactoryInvocations));
     }
 
     [Fact]
@@ -652,13 +787,13 @@ public sealed class VerifierFailureTests
     {
         var manager = new ThreadScopedRotationKeyManager();
         return new KeyRingProviderFactory(
-            _ => new FakeProvider(
+            (Func<CancellationToken, IDataProtectionProvider>)(_ => new FakeProvider(
                 protect: payload => manager.CreatedKey is { } key
                     ? CreateProtectedPayload(payload, key.KeyId)
                     : payload.ToArray(),
-                unprotect: UnprotectPayload),
+                unprotect: UnprotectPayload)),
             TimeSpan.FromSeconds(2),
-            _ => manager,
+            (Func<CancellationToken, IKeyManager>)(_ => manager),
             (keyManager, activationDate, expirationDate, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -672,7 +807,8 @@ public sealed class VerifierFailureTests
     }
 
     private static KeyRingProviderFactory CreateReentrantRotationFactory(
-        ConcurrentBag<KeyRingVerificationResult> nestedResults)
+        ConcurrentBag<KeyRingVerificationResult> nestedResults,
+        Action nestedFactoryStarted)
     {
         var manager = new ThreadScopedRotationKeyManager();
         return new KeyRingProviderFactory(
@@ -687,11 +823,165 @@ public sealed class VerifierFailureTests
             {
                 var nestedResult = await KeyRingVerifier.VerifyAsync(
                         KeyRingScenario.RestartContinuity,
-                        new KeyRingProviderFactory(_ => new FakeProvider(), TimeSpan.FromSeconds(1)),
+                        new KeyRingProviderFactory(
+                            _ =>
+                            {
+                                nestedFactoryStarted();
+                                return new FakeProvider();
+                            },
+                            TimeSpan.FromSeconds(1)),
                         cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
                 nestedResults.Add(nestedResult);
                 cancellationToken.ThrowIfCancellationRequested();
+                return keyManager.CreateNewKey(activationDate, expirationDate);
+            });
+    }
+
+    private static KeyRingProviderFactory CreateSuppressedContextReentrantRotationFactory()
+    {
+        var manager = new ThreadScopedRotationKeyManager();
+        return new KeyRingProviderFactory(
+            _ => new FakeProvider(
+                protect: payload => manager.CreatedKey is { } key
+                    ? CreateProtectedPayload(payload, key.KeyId)
+                    : payload.ToArray(),
+                unprotect: UnprotectPayload),
+            TimeSpan.FromSeconds(2),
+            _ => manager,
+            async (keyManager, activationDate, expirationDate, cancellationToken) =>
+            {
+                Task<KeyRingVerificationResult> nestedTask;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    nestedTask = Task.Run(
+                        () => KeyRingVerifier.VerifyAsync(
+                            KeyRingScenario.RestartContinuity,
+                            new KeyRingProviderFactory(_ => new FakeProvider(), TimeSpan.FromMilliseconds(100)),
+                            cancellationToken: cancellationToken));
+                }
+
+                await nestedTask.ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                return keyManager.CreateNewKey(activationDate, expirationDate);
+            });
+    }
+
+    private static KeyRingProviderFactory CreateReentryFactory(string callbackKind, ReentryProbe probe)
+    {
+        var manager = new ThreadScopedRotationKeyManager();
+        var isRotation = callbackKind is "key-manager-sync" or "key-manager-async" or "rotation-sync" or "rotation-async";
+
+        IDataProtectionProvider CreateProvider()
+        {
+            Func<byte[], byte[]> protect = payload =>
+            {
+                if (callbackKind == "protect")
+                {
+                    probe.TriggerSync(CancellationToken.None);
+                }
+
+                return isRotation && manager.CreatedKey is { } key
+                    ? CreateProtectedPayload(payload, key.KeyId)
+                    : payload.ToArray();
+            };
+            Func<byte[], byte[]> unprotect = payload =>
+            {
+                if (callbackKind == "unprotect")
+                {
+                    probe.TriggerSync(CancellationToken.None);
+                }
+
+                return UnprotectPayload(payload);
+            };
+
+            return new FakeProvider(
+                protect: protect,
+                unprotect: unprotect,
+                createProtector: _ =>
+                {
+                    if (callbackKind == "create-protector")
+                    {
+                        probe.TriggerSync(CancellationToken.None);
+                    }
+
+                    return new FakeProtector(protect, unprotect);
+                });
+        }
+
+        if (callbackKind == "provider-sync")
+        {
+            return new KeyRingProviderFactory(
+                token =>
+                {
+                    probe.TriggerSync(token);
+                    return CreateProvider();
+                },
+                TimeSpan.FromSeconds(2));
+        }
+
+        if (callbackKind == "provider-async")
+        {
+            return new KeyRingProviderFactory(
+                (Func<CancellationToken, Task<IDataProtectionProvider>>)(async token =>
+                {
+                    await probe.TriggerAsync(token).ConfigureAwait(false);
+                    return CreateProvider();
+                }),
+                TimeSpan.FromSeconds(2));
+        }
+
+        if (!isRotation)
+        {
+            return new KeyRingProviderFactory(_ => CreateProvider(), TimeSpan.FromSeconds(2));
+        }
+
+        if (callbackKind == "key-manager-sync" || callbackKind == "rotation-sync")
+        {
+            return new KeyRingProviderFactory(
+                _ => CreateProvider(),
+                TimeSpan.FromSeconds(2),
+                token =>
+                {
+                    if (callbackKind == "key-manager-sync")
+                    {
+                        probe.TriggerSync(token);
+                    }
+
+                    return manager;
+                },
+                (keyManager, activationDate, expirationDate, token) =>
+                {
+                    if (callbackKind == "rotation-sync")
+                    {
+                        probe.TriggerSync(token);
+                    }
+
+                    token.ThrowIfCancellationRequested();
+                    return Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate));
+                });
+        }
+
+        return new KeyRingProviderFactory(
+            (Func<CancellationToken, Task<IDataProtectionProvider>>)(_ => Task.FromResult(CreateProvider())),
+            TimeSpan.FromSeconds(2),
+            (Func<CancellationToken, Task<IKeyManager>>)(async token =>
+            {
+                if (callbackKind == "key-manager-async")
+                {
+                    await probe.TriggerAsync(token).ConfigureAwait(false);
+                }
+
+                return manager;
+            }),
+            async (keyManager, activationDate, expirationDate, token) =>
+            {
+                if (callbackKind == "rotation-async")
+                {
+                    await probe.TriggerAsync(token).ConfigureAwait(false);
+                }
+
+                token.ThrowIfCancellationRequested();
                 return keyManager.CreateNewKey(activationDate, expirationDate);
             });
     }
@@ -733,6 +1023,86 @@ public sealed class VerifierFailureTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task RotationAcceptsStandardPayloadWithBigEndianKeyId()
+    {
+        var manager = new ThreadScopedRotationKeyManager();
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(
+                protect: payload => manager.CreatedKey is { } key
+                    ? CreateProtectedPayload(payload, key.KeyId, bigEndian: true)
+                    : payload.ToArray(),
+                unprotect: UnprotectPayload),
+            TimeSpan.FromSeconds(1),
+            _ => manager,
+            static (keyManager, activationDate, expirationDate, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate));
+            });
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.True(result.Succeeded, result.Message);
+    }
+
+    [Fact]
+    public async Task RotationReportsStandardPayloadWithoutAdoptionAsRotationFailure()
+    {
+        var manager = new ThreadScopedRotationKeyManager();
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(
+                protect: payload => manager.CreatedKey is { } ? CreateProtectedPayload(payload, Guid.NewGuid()) : payload.ToArray(),
+                unprotect: UnprotectPayload),
+            TimeSpan.FromSeconds(1),
+            _ => manager,
+            static (keyManager, activationDate, expirationDate, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate));
+            });
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
+        Assert.Contains("did not adopt", result.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("opaque")]
+    [InlineData("short")]
+    [InlineData("malformed")]
+    public async Task RotationReportsUnsupportedPayloadFormatAsUnavailable(string payloadKind)
+    {
+        var manager = new ThreadScopedRotationKeyManager();
+        var factory = new KeyRingProviderFactory(
+            _ => new FakeProvider(
+                protect: payload => manager.CreatedKey is { } key
+                    ? payloadKind switch
+                    {
+                        "opaque" => CreateOpaqueProtectedPayload(payload),
+                        "short" => [0x09, 0xF0, 0xC9, 0xF0],
+                        "malformed" => [0x08, 0xF0, 0xC9, 0xF0, .. new byte[16], .. payload],
+                        _ => throw new ArgumentOutOfRangeException(nameof(payloadKind)),
+                    }
+                    : payload.ToArray(),
+                unprotect: UnprotectOpaquePayload),
+            TimeSpan.FromSeconds(1),
+            _ => manager,
+            static (keyManager, activationDate, expirationDate, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(keyManager.CreateNewKey(activationDate, expirationDate));
+            });
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.RotationUnavailable, result.FailureKind);
+        Assert.Contains("standard ASP.NET Core Data Protection payload format", result.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -795,15 +1165,31 @@ public sealed class VerifierFailureTests
         Assert.DoesNotContain("master material", result.Message, StringComparison.Ordinal);
     }
 
-    private static byte[] CreateProtectedPayload(byte[] payload, Guid keyId)
+    private static byte[] CreateProtectedPayload(byte[] payload, Guid keyId, bool bigEndian = false)
     {
         var protectedPayload = new byte[20 + payload.Length];
         protectedPayload[0] = 0x09;
         protectedPayload[1] = 0xF0;
         protectedPayload[2] = 0xC9;
         protectedPayload[3] = 0xF0;
-        keyId.TryWriteBytes(protectedPayload.AsSpan(4, 16));
+        if (bigEndian)
+        {
+            keyId.TryWriteBytes(protectedPayload.AsSpan(4, 16), bigEndian: true, out _);
+        }
+        else
+        {
+            keyId.TryWriteBytes(protectedPayload.AsSpan(4, 16));
+        }
+
         payload.CopyTo(protectedPayload.AsSpan(20));
+        return protectedPayload;
+    }
+
+    private static byte[] CreateOpaqueProtectedPayload(byte[] payload)
+    {
+        var protectedPayload = new byte[32 + payload.Length];
+        RandomNumberGenerator.Fill(protectedPayload.AsSpan(0, 32));
+        payload.CopyTo(protectedPayload.AsSpan(32));
         return protectedPayload;
     }
 
@@ -815,6 +1201,91 @@ public sealed class VerifierFailureTests
             && protectedPayload[3] == 0xF0
             ? protectedPayload[20..]
             : protectedPayload.ToArray();
+
+    private static byte[] UnprotectOpaquePayload(byte[] protectedPayload) =>
+        protectedPayload.Length >= 32
+            ? protectedPayload[32..]
+            : protectedPayload.ToArray();
+}
+
+internal sealed class ReentryProbe
+{
+    private int _triggered;
+
+    internal ConcurrentBag<KeyRingVerificationResult> NestedResults { get; } = new();
+
+    internal int NestedFactoryInvocations;
+
+    internal void TriggerSync(CancellationToken cancellationToken) =>
+        TriggerAsync(cancellationToken).GetAwaiter().GetResult();
+
+    internal async Task TriggerAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _triggered, 1) != 0)
+        {
+            return;
+        }
+
+        var nestedFactory = new KeyRingProviderFactory(
+            _ =>
+            {
+                Interlocked.Increment(ref NestedFactoryInvocations);
+                return new FakeProvider();
+            },
+            TimeSpan.FromSeconds(1));
+        NestedResults.Add(
+            await KeyRingVerifier.VerifyAsync(
+                    KeyRingScenario.RestartContinuity,
+                    nestedFactory,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false));
+    }
+}
+
+internal sealed class NestedOutcomeProbe
+{
+    internal ConcurrentBag<KeyRingVerificationResult> Results { get; } = new();
+
+    internal int NestedFactoryInvocations;
+
+    internal async Task RunAsync(CancellationToken _)
+    {
+        var faultedFactory = new KeyRingProviderFactory(
+            (Func<CancellationToken, IDataProtectionProvider>)(token =>
+            {
+                Interlocked.Increment(ref NestedFactoryInvocations);
+                token.ThrowIfCancellationRequested();
+                throw new InvalidOperationException("nested fault");
+            }),
+            TimeSpan.FromSeconds(1));
+        Results.Add(await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, faultedFactory, cancellationToken: CancellationToken.None).ConfigureAwait(false));
+
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var canceledFactory = new KeyRingProviderFactory(
+            _ =>
+            {
+                Interlocked.Increment(ref NestedFactoryInvocations);
+                return new FakeProvider();
+            },
+            TimeSpan.FromSeconds(1));
+        Results.Add(
+            await KeyRingVerifier.VerifyAsync(
+                    KeyRingScenario.RestartContinuity,
+                    canceledFactory,
+                    cancellationToken: canceled.Token)
+                .ConfigureAwait(false));
+
+        var timedOutFactory = new KeyRingProviderFactory(
+            _ =>
+            {
+                Interlocked.Increment(ref NestedFactoryInvocations);
+                Thread.Sleep(100);
+                return new FakeProvider();
+            },
+            TimeSpan.FromMilliseconds(10));
+        Results.Add(await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, timedOutFactory, cancellationToken: CancellationToken.None).ConfigureAwait(false));
+    }
 }
 
 internal static class RotationThreadProbe
