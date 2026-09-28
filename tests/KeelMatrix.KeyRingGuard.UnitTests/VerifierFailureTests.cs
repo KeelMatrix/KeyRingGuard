@@ -183,6 +183,49 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
+    public async Task PurposeIsolationDoesNotTreatAnArbitraryCrossBoundaryCryptographicExceptionAsProof()
+    {
+        var factory = new KeyRingProviderFactory(
+            _ => CreatePurposeTaggedProvider(),
+            TimeSpan.FromSeconds(1));
+
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.PurposeIsolation, factory);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
+        Assert.Contains("standard ASP.NET Core persisted-protector contract", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ApplicationIsolationDoesNotTreatAnArbitraryCrossBoundaryCryptographicExceptionAsProof()
+    {
+        var boundary = new KeyRingBoundary();
+        var firstFactory = new KeyRingProviderFactory(
+            _ => CreateApplicationTaggedProvider(1),
+            TimeSpan.FromSeconds(1),
+            null,
+            boundary);
+        var secondFactory = new KeyRingProviderFactory(
+            _ => CreateApplicationTaggedProvider(2),
+            TimeSpan.FromSeconds(1),
+            null,
+            boundary);
+
+        var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
+            KeyRingScenario.ApplicationIsolation,
+            firstFactory,
+            secondFactory,
+            new KeyRingIsolationControl(
+                new KeyRingProviderFactory(_ => CreateApplicationTaggedProvider(0), TimeSpan.FromSeconds(1), null, boundary),
+                new KeyRingProviderFactory(_ => CreateApplicationTaggedProvider(0), TimeSpan.FromSeconds(1), null, boundary)),
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
+        Assert.Contains("standard ASP.NET Core persisted-protector contract", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SynchronousProviderFactoryTimeoutIsBounded()
     {
         var factory = new KeyRingProviderFactory(
@@ -1026,7 +1069,7 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
-    public async Task RotationAcceptsStandardPayloadWithBigEndianKeyId()
+    public async Task RotationRejectsNonCanonicalBigEndianKeyId()
     {
         var manager = new ThreadScopedRotationKeyManager();
         var factory = new KeyRingProviderFactory(
@@ -1045,7 +1088,8 @@ public sealed class VerifierFailureTests
 
         var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
 
-        Assert.True(result.Succeeded, result.Message);
+        Assert.False(result.Succeeded);
+        Assert.Equal(KeyRingFailureKind.RotationUnavailable, result.FailureKind);
     }
 
     [Fact]
@@ -1073,8 +1117,11 @@ public sealed class VerifierFailureTests
 
     [Theory]
     [InlineData("opaque")]
+    [InlineData("zero")]
     [InlineData("short")]
+    [InlineData("truncated-key-id")]
     [InlineData("malformed")]
+    [InlineData("empty-standard")]
     public async Task RotationReportsUnsupportedPayloadFormatAsUnavailable(string payloadKind)
     {
         var manager = new ThreadScopedRotationKeyManager();
@@ -1084,8 +1131,11 @@ public sealed class VerifierFailureTests
                     ? payloadKind switch
                     {
                         "opaque" => CreateOpaqueProtectedPayload(payload),
+                        "zero" => [],
                         "short" => [0x09, 0xF0, 0xC9, 0xF0],
+                        "truncated-key-id" => [0x09, 0xF0, 0xC9, 0xF0, .. new byte[15]],
                         "malformed" => [0x08, 0xF0, 0xC9, 0xF0, .. new byte[16], .. payload],
+                        "empty-standard" => CreateProtectedPayload([], key.KeyId),
                         _ => throw new ArgumentOutOfRangeException(nameof(payloadKind)),
                     }
                     : payload.ToArray(),
@@ -1104,6 +1154,30 @@ public sealed class VerifierFailureTests
         Assert.Equal(KeyRingFailureKind.RotationUnavailable, result.FailureKind);
         Assert.Contains("standard ASP.NET Core Data Protection payload format", result.Message, StringComparison.Ordinal);
     }
+
+    private static FakeProvider CreatePurposeTaggedProvider() =>
+        new(
+            createProtector: purpose =>
+            {
+                var tag = purpose.EndsWith(".Alternate", StringComparison.Ordinal) ? (byte)2 : (byte)1;
+                return CreateTaggedProtector(tag);
+            });
+
+    private static FakeProvider CreateApplicationTaggedProvider(byte tag) =>
+        new(createProtector: _ => CreateTaggedProtector(tag));
+
+    private static FakeProtector CreateTaggedProtector(byte tag) =>
+        new(
+            payload => [tag, .. payload],
+            protectedPayload =>
+            {
+                if (protectedPayload.Length > 0 && protectedPayload[0] == tag)
+                {
+                    return protectedPayload[1..];
+                }
+
+                throw new CryptographicException("unrelated cross-boundary provider failure");
+            });
 
     [Fact]
     public async Task EveryCreatedProviderIsDisposedAcrossScenarioAndEarlyExitPaths()

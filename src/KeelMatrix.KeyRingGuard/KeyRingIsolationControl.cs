@@ -2,6 +2,8 @@ namespace KeelMatrix.KeyRingGuard;
 
 /// <summary>
 /// Describes the same-boundary control used to attribute application-isolation rejection.
+/// An isolation verdict also requires the cross-check protector to implement the standard
+/// ASP.NET Core persisted-protector contract; an arbitrary provider exception is not proof.
 /// </summary>
 public sealed class KeyRingIsolationControl
 {

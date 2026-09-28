@@ -7,6 +7,8 @@ namespace KeelMatrix.KeyRingGuard;
 
 /// <summary>
 /// Executes provider-neutral Data Protection continuity and isolation scenarios.
+/// Isolation rejection is attributed only when the cross-check protector implements the standard
+/// ASP.NET Core persisted-protector contract; arbitrary provider exceptions fail closed.
 /// </summary>
 public static class KeyRingVerifier
 {
@@ -44,7 +46,8 @@ public static class KeyRingVerifier
     /// <summary>
     /// Verifies a scenario using caller-supplied provider factories and a shared-boundary control.
     /// Application isolation requires a control configured for the same key store and application discriminator
-    /// on both sides so that rejection is not attributed to an unrelated provider mismatch.
+    /// on both sides. Cross-boundary rejection is accepted only from the standard ASP.NET Core persisted
+    /// protector contract; an arbitrary provider exception is reported as a failure.
     /// </summary>
     /// <param name="scenario">The immutable scenario description to execute.</param>
     /// <param name="providerFactory">The primary provider factory.</param>
@@ -891,7 +894,7 @@ public static class KeyRingVerifier
 
     private static RotationPayloadFormat InspectPayloadFormat(byte[] protectedPayload, Guid keyId)
     {
-        if (protectedPayload.Length < 20
+        if (protectedPayload.Length <= 20
             || protectedPayload[0] != 0x09
             || protectedPayload[1] != 0xF0
             || protectedPayload[2] != 0xC9
@@ -905,7 +908,12 @@ public static class KeyRingVerifier
         Span<byte> bigEndianKey = stackalloc byte[16];
         keyId.TryWriteBytes(littleEndianKey);
         keyId.TryWriteBytes(bigEndianKey, bigEndian: true, out _);
-        return payloadKey.SequenceEqual(littleEndianKey) || payloadKey.SequenceEqual(bigEndianKey)
+        if (payloadKey.SequenceEqual(bigEndianKey))
+        {
+            return RotationPayloadFormat.Unsupported;
+        }
+
+        return payloadKey.SequenceEqual(littleEndianKey)
             ? RotationPayloadFormat.StandardWithExpectedKey
             : RotationPayloadFormat.StandardButDifferentKey;
     }
@@ -1090,13 +1098,17 @@ public static class KeyRingVerifier
         {
             return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
         }
-        if (operation.Exception is CryptographicException)
+        if (operation.Exception is CryptographicException
+            && protectorResult.Value is IPersistedDataProtector)
         {
             return Success(scenario, "Isolation passed.");
         }
         if (operation.Exception is not null)
         {
-            return Failure(scenario, KeyRingFailureKind.Unprotect, "Isolation failed: the configured provider could not complete the cross-boundary check.");
+            return Failure(
+                scenario,
+                KeyRingFailureKind.Unprotect,
+                "Isolation failed: the cross-boundary rejection was not attributable to the standard ASP.NET Core persisted-protector contract.");
         }
 
         return Failure(scenario, KeyRingFailureKind.UnexpectedCrossUnprotect, "Isolation failed: a provider from an isolated boundary successfully unprotected a payload.");

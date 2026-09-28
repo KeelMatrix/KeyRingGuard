@@ -70,6 +70,8 @@ static void RequireSuccess(KeyRingVerificationResult result)
 
 This quick start verifies both restart continuity and intentional application-name isolation against one temporary key store.
 
+Isolation succeeds only when the same-boundary control passes and each cross-check is rejected by the standard ASP.NET Core persisted-protector contract. An arbitrary provider `CryptographicException` is reported as an unprotect failure rather than accepted as isolation evidence.
+
 ## Supported runtime and platforms
 
 The package targets `net8.0`. The repository's filesystem integration and package-consumer checks run on Windows, Linux, and macOS in the release-equivalent CI matrix. That evidence covers the shipped filesystem fixtures, not every third-party provider or deployment environment. The repository uses the .NET SDK `10.0.401`, pinned in `global.json`, to build the package.

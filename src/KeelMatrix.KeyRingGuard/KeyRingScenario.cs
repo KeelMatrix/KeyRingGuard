@@ -44,6 +44,7 @@ public sealed class KeyRingScenario
 
     /// <summary>
     /// Verifies that different application discriminators reject one another's payloads after a same-boundary control.
+    /// The rejection must come from the standard ASP.NET Core persisted-protector contract.
     /// </summary>
     public static KeyRingScenario ApplicationIsolation { get; } = new(
         "Application isolation",
@@ -52,6 +53,7 @@ public sealed class KeyRingScenario
 
     /// <summary>
     /// Verifies that different purposes reject one another's payloads after a same-purpose exchange control.
+    /// The rejection must come from the standard ASP.NET Core persisted-protector contract.
     /// </summary>
     public static KeyRingScenario PurposeIsolation { get; } = new(
         "Purpose isolation",

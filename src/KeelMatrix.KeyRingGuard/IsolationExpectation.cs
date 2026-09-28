@@ -6,7 +6,8 @@ namespace KeelMatrix.KeyRingGuard;
 public enum IsolationExpectation
 {
     /// <summary>
-    /// A payload from the other logical boundary must not be readable.
+    /// A payload from the other logical boundary must be rejected by the standard ASP.NET Core
+    /// persisted-protector contract rather than by an arbitrary provider exception.
     /// </summary>
     RejectCrossUnprotect = 0
 }

@@ -106,11 +106,11 @@ var result = await KeyRingVerifier.VerifyWithIsolationControlAsync(
     CancellationToken.None);
 ```
 
-Each provider must first protect and unprotect its own payload, and an unexpected successful cross-unprotect is reported as `UnexpectedCrossUnprotect` and fails the result. A missing or mismatched boundary is an invalid scenario, so an unrelated third-store control cannot turn a storage mismatch into isolation evidence. A cryptographic rejection is accepted only after those same-boundary controls succeed; unrelated provider failures remain failures.
+Each provider must first protect and unprotect its own payload, and an unexpected successful cross-unprotect is reported as `UnexpectedCrossUnprotect` and fails the result. A missing or mismatched boundary is an invalid scenario, so an unrelated third-store control cannot turn a storage mismatch into isolation evidence. After those controls succeed, a cross-check is accepted as isolation evidence only when the protector implements `IPersistedDataProtector` and reports a `CryptographicException`; an arbitrary provider exception is reported as `Unprotect` and fails closed. This standard-protector requirement keeps a provider-specific failure from becoming a false isolation pass.
 
 ## Purpose isolation
 
-`PurposeIsolation` creates two independent providers from the supplied factory, first proves that they can exchange a same-purpose payload, then protects with two different purposes and expects cross-purpose unprotect to fail. The purpose strings are owned by the verifier so the test remains synthetic and does not require a caller payload. A factory that silently selects a different store on each call fails the shared-boundary control.
+`PurposeIsolation` creates two independent providers from the supplied factory, first proves that they can exchange a same-purpose payload, then protects with two different purposes and expects cross-purpose unprotect to fail through the standard `IPersistedDataProtector` contract. An arbitrary provider exception is reported as `Unprotect` rather than accepted as proof. The purpose strings are owned by the verifier so the test remains synthetic and does not require a caller payload. A factory that silently selects a different store on each call fails the shared-boundary control.
 
 ## Rotation continuity
 
@@ -135,7 +135,7 @@ var result = await KeyRingVerifier.VerifyAsync(
     factory);
 ```
 
-If no linked key-manager and key-creation factories are supplied, the result is `RotationUnavailable`. KeyRingGuard never deletes or revokes keys. A rotation callback that returns a pre-existing key is rejected as a failed rotation, even when that key is active. If the recreated provider's protected payload is not in the standard ASP.NET Core Data Protection wire format, the result is `RotationUnavailable` with a diagnostic explaining that key adoption cannot be verified. When the standard format is present but the payload names the wrong or stale key, the result is `RotationFailure`. A callback that ignores cancellation may continue after a timeout; callbacks must check cancellation before mutating the store and honor it during their work.
+If no linked key-manager and key-creation factories are supplied, the result is `RotationUnavailable`. KeyRingGuard never deletes or revokes keys. A rotation callback that returns a pre-existing key is rejected as a failed rotation, even when that key is active. The recreated provider must return the canonical standard ASP.NET Core envelope: the `09 F0 C9 F0` header, the platform's little-endian `Guid` key ID, and a non-empty encryptor-specific payload. Missing/truncated envelopes, alternate key-ID byte order, or another payload format produce `RotationUnavailable` with a diagnostic explaining that key adoption cannot be verified. When the canonical envelope names the wrong or stale key, the result is `RotationFailure`. A callback that ignores cancellation may continue after a timeout; callbacks must check cancellation before mutating the store and honor it during their work.
 
 ## Provider-factory patterns
 
