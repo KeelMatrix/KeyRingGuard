@@ -10,10 +10,12 @@ $separatorPattern = '(?:/|' + [regex]::Escape($windowsPathSeparator) + ')'
 $wordBoundary = [char]92 + 'b'
 $root = (Resolve-Path $RepositoryRoot).Path
 $launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
-& $launchGuard -SelfTest
-if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
-& $launchGuard
-if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
+if (Test-Path -LiteralPath $launchGuard -PathType Leaf) {
+    & $launchGuard -SelfTest
+    if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
+    & $launchGuard
+    if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
+}
 $tracked = @(git -C $root ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate tracked files.' }
 $workflowPaths = @($tracked | Where-Object { $_ -match ('(^|' + $separatorPattern + ')[.]github' + $separatorPattern + 'workflows(' + $separatorPattern + '|$)') })

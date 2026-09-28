@@ -2,14 +2,21 @@
 param(
     [string]$Version = '0.1.0',
     [string]$PackagePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'artifacts' 'packages' 'KeelMatrix.KeyRingGuard.0.1.0.nupkg')),
-    [string]$ExpectedPayloadPath = (Join-Path $PSScriptRoot 'ExpectedPackagePayload.txt')
+    [string]$ExpectedPayloadPath = (Join-Path $PSScriptRoot 'ExpectedPackagePayload.txt'),
+    [switch]$AllowMissingIcon
 )
 
 $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $iconSource = Join-Path $repositoryRoot 'icon.png'
-$expected = @(Get-Content -LiteralPath $ExpectedPayloadPath | Where-Object { $_ -and -not $_.StartsWith('#') } | Sort-Object)
+$iconSourcePresent = Test-Path -LiteralPath $iconSource -PathType Leaf
+if (-not $iconSourcePresent -and -not $AllowMissingIcon) {
+    throw "Icon contract failed: required repository-root icon.png is missing: $iconSource"
+}
+$expected = @(Get-Content -LiteralPath $ExpectedPayloadPath |
+    Where-Object { $_ -and -not $_.StartsWith('#') -and ($iconSourcePresent -or $_ -ne 'icon.png') } |
+    Sort-Object)
 
 function Assert-IconBytes([byte[]]$Bytes, [string]$Description) {
     if ($Bytes.Length -gt 200KB) { throw "Icon contract failed: $Description is larger than 200 KB." }
@@ -29,11 +36,11 @@ function Assert-IconBytes([byte[]]$Bytes, [string]$Description) {
     }
 }
 
-if (-not (Test-Path -LiteralPath $iconSource -PathType Leaf)) {
-    throw "Icon contract failed: required repository-root icon.png is missing: $iconSource"
+$sourceBytes = $null
+if ($iconSourcePresent) {
+    $sourceBytes = [IO.File]::ReadAllBytes($iconSource)
+    Assert-IconBytes $sourceBytes 'required repository-root icon.png'
 }
-$sourceBytes = [IO.File]::ReadAllBytes($iconSource)
-Assert-IconBytes $sourceBytes 'required repository-root icon.png'
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($package)
@@ -53,24 +60,28 @@ try {
     $metadata = $nuspec.SelectSingleNode('/n:package/n:metadata', $namespace)
     if ($metadata.id -ne 'KeelMatrix.KeyRingGuard' -or $metadata.version -ne $Version) { throw 'Package identity or version is incorrect.' }
     if ($metadata.readme -ne 'README.md' -or $metadata.license.type -ne 'file' -or $metadata.license.InnerText -ne 'LICENSE') { throw 'README or license metadata is incorrect.' }
-    if ($metadata.icon -cne 'icon.png') { throw "Icon contract failed: nuspec <icon> must be 'icon.png'." }
     $iconEntry = $archive.GetEntry('icon.png')
-    if ($null -eq $iconEntry) { throw 'Icon contract failed: package-root icon.png is missing.' }
-    $iconStream = $iconEntry.Open()
-    try {
-        $embeddedBytes = [byte[]]::new($iconEntry.Length)
-        $offset = 0
-        while ($offset -lt $embeddedBytes.Length) {
-            $read = $iconStream.Read($embeddedBytes, $offset, $embeddedBytes.Length - $offset)
-            if ($read -le 0) { break }
-            $offset += $read
-        }
-    } finally { $iconStream.Dispose() }
-    if ($offset -ne $embeddedBytes.Length) { throw 'Icon contract failed: package-root icon.png could not be read completely.' }
-    Assert-IconBytes $embeddedBytes 'package-root icon.png'
-    $sourceHash = [Security.Cryptography.SHA256]::HashData($sourceBytes)
-    $embeddedHash = [Security.Cryptography.SHA256]::HashData($embeddedBytes)
-    if (-not [Linq.Enumerable]::SequenceEqual($sourceHash, $embeddedHash)) { throw 'Icon contract failed: embedded icon.png differs from repository-root icon.png.' }
+    if ($iconSourcePresent) {
+        if ($metadata.icon -cne 'icon.png') { throw "Icon contract failed: nuspec <icon> must be 'icon.png'." }
+        if ($null -eq $iconEntry) { throw 'Icon contract failed: package-root icon.png is missing.' }
+        $iconStream = $iconEntry.Open()
+        try {
+            $embeddedBytes = [byte[]]::new($iconEntry.Length)
+            $offset = 0
+            while ($offset -lt $embeddedBytes.Length) {
+                $read = $iconStream.Read($embeddedBytes, $offset, $embeddedBytes.Length - $offset)
+                if ($read -le 0) { break }
+                $offset += $read
+            }
+        } finally { $iconStream.Dispose() }
+        if ($offset -ne $embeddedBytes.Length) { throw 'Icon contract failed: package-root icon.png could not be read completely.' }
+        Assert-IconBytes $embeddedBytes 'package-root icon.png'
+        $sourceHash = [Security.Cryptography.SHA256]::HashData($sourceBytes)
+        $embeddedHash = [Security.Cryptography.SHA256]::HashData($embeddedBytes)
+        if (-not [Linq.Enumerable]::SequenceEqual($sourceHash, $embeddedHash)) { throw 'Icon contract failed: embedded icon.png differs from repository-root icon.png.' }
+    } elseif ($metadata.icon -or $iconEntry) {
+        throw 'Icon contract failed: package contains icon metadata or bytes while the repository-root icon.png is absent.'
+    }
     if (-not $metadata.dependencies.group.dependency) { throw 'The package has no declared Data Protection dependency.' }
     $dependencies = @($metadata.dependencies.group.dependency | ForEach-Object id)
     if ($dependencies -contains 'KeelMatrix.Telemetry' -or $dependencies -match 'Redis|Azure|AWS|StackExchange|SqlClient') { throw "Unexpected provider or telemetry dependency: $($dependencies -join ', ')." }
@@ -80,7 +91,11 @@ try {
 
     Write-Output "Package inspection: PASS ($package)"
     Write-Output "Package payload entries: $($actual.Count)"
-    Write-Output "Package icon metadata: $($metadata.icon)"
+    if ($iconSourcePresent) {
+        Write-Output "Package icon metadata: $($metadata.icon)"
+    } else {
+        Write-Output 'Package icon metadata: absent (allowed for readiness validation)'
+    }
 } finally {
     $archive.Dispose()
 }
@@ -102,4 +117,8 @@ $projectText = Get-Content -Raw -LiteralPath $project
 Write-Output 'Icon pack configuration:'
 $projectText -split "`r?`n" | Where-Object { $_ -match 'PackageIcon|icon[.]png' } | ForEach-Object { Write-Output $_.Trim() }
 Write-Output "Resolved icon source path: $([System.IO.Path]::Combine($repositoryRoot, 'icon.png'))"
-Write-Output 'Icon contract: PASS (source and package-root icon.png are valid and byte-identical)'
+if ($iconSourcePresent) {
+    Write-Output 'Icon contract: PASS (source and package-root icon.png are valid and byte-identical)'
+} else {
+    Write-Output 'Icon contract: PASS (icon absent under explicit readiness allowance)'
+}

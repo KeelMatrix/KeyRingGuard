@@ -2,7 +2,7 @@
   <Target Name="ValidateKeyRingGuardPackageInputs"
           BeforeTargets="Pack"
           Condition="'$(IsPackable)' == 'true'">
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)/../../icon.png')"
+    <Error Condition="'$(RequirePackageIcon)' == 'true' and !Exists('$(MSBuildProjectDirectory)/../../icon.png')"
            Text="Package input is missing the founder-owned repository-root icon.png." />
     <ItemGroup>
       <_ForbiddenPackageInput Include="$(MSBuildProjectDirectory)/**/*.env*" />

@@ -60,6 +60,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyReleaseWorkflowContract.ps1
 
+      - name: Verify package icon contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifyPackageIconContract.ps1
+
       - name: Verify CI workflow contract
         shell: pwsh
         run: pwsh -NoProfile -File tests/VerifyCiWorkflowContract.ps1
@@ -91,11 +95,11 @@ jobs:
         run: dotnet test KeelMatrix.KeyRingGuard.sln --configuration Release --no-build
 
       - name: Pack package and symbols
-        run: dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg --output ./artifacts/packages
+        run: dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg -p:RequirePackageIcon=false --output ./artifacts/packages
 
-      - name: Inspect package contents and icon
+      - name: Inspect package contents and optional icon
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/Inspect-Package.ps1 -Version 0.1.0 -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.0.1.0.nupkg
+        run: pwsh -NoProfile -File scripts/Inspect-Package.ps1 -Version 0.1.0 -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.0.1.0.nupkg -AllowMissingIcon
 
       - name: Package consumer smoke
         shell: pwsh

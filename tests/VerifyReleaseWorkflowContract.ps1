@@ -23,6 +23,7 @@ Assert-Contains $text ('scripts/GetReleaseVersion' + $literalDot + 'ps1') 'the w
 Assert-Contains $text ('scripts/Test-ChangelogContract' + $literalDot + 'ps1') 'the workflow must recheck changelog/version consistency.'
 Assert-Contains $text ('scripts/Invoke-VulnerabilityAudit' + $literalDot + 'ps1') 'the workflow must run the fail-closed vulnerability audit.'
 Assert-Contains $text ('scripts/Inspect-Package' + $literalDot + 'ps1') 'the workflow must inspect the package before publication.'
+Assert-Contains $text '-p:RequirePackageIcon=true' 'release packing must fail closed when the founder-owned icon is absent.'
 Assert-Contains $text 'Validate exact artifact set' 'the validation job must check the exact artifact set.'
 Assert-Contains $text 'NuGet/login@v1' 'the publish job must use NuGet Trusted Publishing.'
 Assert-Contains $text 'user: dmitriyzen' 'the publish job must use the approved NuGet username.'

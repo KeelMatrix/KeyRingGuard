@@ -17,7 +17,7 @@ Read the shipping project before changing the verifier, then the nearest matchin
 dotnet restore KeelMatrix.KeyRingGuard.sln
 dotnet build KeelMatrix.KeyRingGuard.sln --configuration Release --no-restore
 dotnet test KeelMatrix.KeyRingGuard.sln --configuration Release --no-build
-dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg --output ./artifacts/packages
+dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg -p:RequirePackageIcon=false --output ./artifacts/packages
 pwsh ./scripts/Invoke-LocalGate.ps1
 ```
 
@@ -30,6 +30,7 @@ pwsh ./scripts/Invoke-LocalGate.ps1
 - No verifier operation deletes or revokes keys. Rotation verification requires explicitly supplied linked key-manager and cancellation-aware key-creation factories, snapshots opaque key IDs and invokes the callback in one bounded scheduled operation after setup succeeds, rejects pre-existing/no-op key returns, and uses a dedicated test store.
 - The package has no network behavior and no telemetry dependency. A caller-supplied provider factory may use a network-backed store.
 - Test projects and the package consumer are not packable and must not become package dependencies.
+- Readiness packaging allows the founder-owned root icon to be absent and verifies it whenever present; release packaging passes `RequirePackageIcon=true` and fails closed when the icon is absent.
 
 ## Validation strategy
 

@@ -32,7 +32,7 @@ function Get-LaunchViolations([string]$Path) {
             $null
         }
 
-        if ($commandName -match '^(?i:pwsh|powershell)(?:\.exe)?$') {
+        if ($commandName -match '^(?i:pwsh|powershell)(?:[.]exe)?$') {
             [void]$violations.Add("${Path}:$($command.Extent.StartLineNumber): direct nested PowerShell launch")
             continue
         }
@@ -40,12 +40,13 @@ function Get-LaunchViolations([string]$Path) {
         $literalArguments = @($command.CommandElements | Select-Object -Skip 1 | Where-Object {
                 $_ -is [System.Management.Automation.Language.StringConstantExpressionAst]
             } | ForEach-Object { $_.Value })
-        if ($literalArguments | Where-Object { $_ -match '^(?i:pwsh|powershell)(?:\.exe)?$' }) {
+        if ($literalArguments | Where-Object { $_ -match '^(?i:pwsh|powershell)(?:[.]exe)?$' }) {
             [void]$violations.Add("${Path}:$($command.Extent.StartLineNumber): nested PowerShell executable passed to '$commandName'")
         }
 
-        if ($commandName -eq 'Start-Process' -and
-            $source -notmatch '(?i)(?:-WindowStyle\s+[''"]?Hidden|(?:\.)?WindowStyle\s*=\s*[''"]?Hidden|CreateNoWindow|NoNewWindow)') {
+        $whiteSpacePattern = '[ ' + [char]9 + ']'
+        $windowStylePattern = '(?i)(?:-WindowStyle' + $whiteSpacePattern + '+[''"]?Hidden|[.]?WindowStyle' + $whiteSpacePattern + '*=' + $whiteSpacePattern + '*[''"]?Hidden|CreateNoWindow|NoNewWindow)'
+        if ($commandName -eq 'Start-Process' -and $source -notmatch $windowStylePattern) {
             [void]$violations.Add("${Path}:$($command.Extent.StartLineNumber): Start-Process lacks hidden-window containment")
         }
     }
@@ -84,10 +85,12 @@ if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
     throw "Shared nested PowerShell launch helper is missing: $helperPath"
 }
 
+$pathSeparatorPattern = '(?:/|' + [regex]::Escape([char]92) + ')'
+$excludedPathPattern = $pathSeparatorPattern + '((?:[.]git|bin|obj|artifacts)|_probe' + $pathSeparatorPattern + 'corpus)' + $pathSeparatorPattern
 $scriptFiles = Get-ChildItem -LiteralPath $repositoryRoot -Recurse -File -Filter '*.ps1' |
     Where-Object {
         $_.FullName -notin @($helperPath, $guardPath) -and
-        $_.FullName -notmatch '[\\/]((\.git)|(bin)|(obj)|(artifacts)|_probe[\\/]corpus)([\\/]|$)'
+        $_.FullName -notmatch $excludedPathPattern
     }
 $violations = @($scriptFiles | ForEach-Object { Get-LaunchViolations $_.FullName })
 if ($violations.Count -gt 0) {
