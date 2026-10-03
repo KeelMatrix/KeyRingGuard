@@ -50,15 +50,274 @@ $checkedPowerShellFiles = @(
 
 if ($checkedPowerShellFiles.Count -eq 0) { Fail 'the checked PowerShell source set is empty.' }
 
+function Add-RegexStringNodes(
+    [System.Management.Automation.Language.Ast]$Expression,
+    [System.Collections.Generic.HashSet[int]]$RegexStringOffsets
+) {
+    if ($null -eq $Expression) { return }
+
+    if ($Expression -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+        $Expression -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+        [void]$RegexStringOffsets.Add($Expression.Extent.StartOffset)
+    }
+
+    foreach ($stringNode in @($Expression.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+            $node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+    }, $true))) {
+        [void]$RegexStringOffsets.Add($stringNode.Extent.StartOffset)
+    }
+}
+
+function Add-RegexVariables(
+    [System.Management.Automation.Language.Ast]$Expression,
+    [System.Collections.Generic.HashSet[string]]$RegexVariableNames
+) {
+    if ($null -eq $Expression) { return }
+
+    if ($Expression -is [System.Management.Automation.Language.VariableExpressionAst]) {
+        [void]$RegexVariableNames.Add($Expression.VariablePath.UserPath)
+    }
+
+    foreach ($variableNode in @($Expression.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.VariableExpressionAst]
+    }, $true))) {
+        [void]$RegexVariableNames.Add($variableNode.VariablePath.UserPath)
+    }
+}
+
+function Test-SimplePathCharacter([char]$Character) {
+    return [char]::IsLetterOrDigit($Character) -or $Character -in @('_', '.', '-')
+}
+
+function Test-StringExpressionConstructed([System.Management.Automation.Language.Ast]$StringNode) {
+    $parent = $StringNode.Parent
+    while ($null -ne $parent) {
+        if ($parent -is [System.Management.Automation.Language.BinaryExpressionAst]) {
+            $operatorName = [string]$parent.Operator
+            if ($operatorName -in @('Plus', 'Iplus', 'Cplus', 'Format', 'Iformat', 'Cformat')) {
+                return $true
+            }
+        }
+
+        $parent = $parent.Parent
+    }
+
+    return $false
+}
+
+function Get-StringBackslashViolation(
+    [string]$Value,
+    [bool]$RegexOperand,
+    [bool]$Constructed,
+    [char]$WindowsPathSeparator
+) {
+    $regexEscapeLetters = 'ABDGKPSTWZabcdefknprstuvwxz'
+    $length = $Value.Length
+
+    for ($index = 0; $index -lt $length; $index++) {
+        if ($Value[$index] -ne $WindowsPathSeparator) { continue }
+
+        $runEnd = $index
+        while ($runEnd -lt $length -and $Value[$runEnd] -eq $WindowsPathSeparator) {
+            $runEnd++
+        }
+        $runLength = $runEnd - $index
+
+        if (-not $RegexOperand) {
+            return [pscustomobject]@{ Index = $index; Reason = 'string contains a literal Windows path separator' }
+        }
+
+        if ($runLength -gt 2) {
+            return [pscustomobject]@{ Index = $index; Reason = 'regex operand contains an unsupported backslash run' }
+        }
+
+        $nextIndex = $runEnd
+        if ($runLength -eq 1 -and $nextIndex -lt $length) {
+            $nextCharacter = $Value[$nextIndex]
+            if ([char]::IsLetter($nextCharacter) -and $regexEscapeLetters.IndexOf($nextCharacter) -lt 0) {
+                return [pscustomobject]@{ Index = $index; Reason = 'regex operand contains an unknown escape' }
+            }
+        }
+
+        # A drive-prefixed path with one source separator is a path, not a regex escape.
+        if ($runLength -eq 1 -and $index -ge 2 -and
+            [char]::IsLetter($Value[$index - 2]) -and $Value[$index - 1] -eq ':') {
+            return [pscustomobject]@{ Index = $index; Reason = 'drive-prefixed string contains a literal Windows path separator' }
+        }
+
+        $leftStart = $index - 1
+        while ($leftStart -ge 0 -and (Test-SimplePathCharacter $Value[$leftStart])) {
+            $leftStart--
+        }
+        $rightEnd = $runEnd
+        while ($rightEnd -lt $length -and (Test-SimplePathCharacter $Value[$rightEnd])) {
+            $rightEnd++
+        }
+
+        $hasLeftSegment = $leftStart -lt ($index - 1)
+        $hasRightSegment = $rightEnd -gt $runEnd
+        $rightStartsWithRegexPunctuation = $hasRightSegment -and $Value[$runEnd] -eq '.'
+        $leftSegment = if ($hasLeftSegment) { $Value.Substring($leftStart + 1, $index - $leftStart - 1) } else { '' }
+        $leftStartsWithVariable = $hasLeftSegment -and $leftStart -ge 0 -and $Value[$leftStart] -eq '$'
+        $pathLikeRightSegment = $hasRightSegment -and (($rightEnd - $runEnd -gt 1) -or
+            $leftStartsWithVariable -or $leftSegment -in @('.', '..'))
+        if ($runLength -eq 1 -and $hasLeftSegment -and $hasRightSegment -and
+            $pathLikeRightSegment -and -not $rightStartsWithRegexPunctuation) {
+            return [pscustomobject]@{ Index = $index; Reason = 'string contains path-like segments separated by a Windows path separator' }
+        }
+
+        # Interpolated variables, subexpressions, and format placeholders can end in a
+        # non-path character, so identify those boundaries explicitly.
+        if ($runLength -eq 1 -and $index -gt 0) {
+            $prefix = $Value.Substring(0, $index)
+            if (($Value[$index - 1] -eq ')' -and $prefix.Contains('$(')) -or
+                ($Value[$index - 1] -eq '}' -and ($prefix.Contains('${') -or
+                    ($prefix.StartsWith('{') -and $prefix.EndsWith('}'))))) {
+                return [pscustomobject]@{ Index = $index; Reason = 'interpolated or formatted expression contains a literal Windows path separator' }
+            }
+        }
+
+        # A path fragment supplied by concatenation or format construction commonly
+        # starts with the separator, which has no left segment to classify above.
+        if ($Constructed -and $runLength -eq 1 -and $index -eq 0 -and
+            $hasRightSegment -and $rightEnd - $runEnd -gt 1 -and $Value[$runEnd] -ne '.') {
+            return [pscustomobject]@{ Index = $index; Reason = 'constructed path fragment contains a literal Windows path separator' }
+        }
+    }
+
+    return $null
+}
+
 foreach ($sourceFile in $checkedPowerShellFiles) {
     $scriptText = Get-Content -Raw -LiteralPath $sourceFile.FullName
-    $windowsPathPattern = '(?i)(?:[A-Za-z]:\\[^\s''"`]+|(?:^|[\s''"`=({\[,;])(?:\.{1,2}|[A-Za-z0-9_.-]+)\\(?:[A-Za-z0-9_.-]+\\)*[A-Za-z0-9_.-]+)'
-    $separatorMatch = [regex]::Match($scriptText, $windowsPathPattern)
-    if (-not $separatorMatch.Success) { continue }
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -gt 0) {
+        $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $sourceFile.FullName).Replace($windowsPathSeparator, '/')
+        Fail "$relativePath has PowerShell parse errors."
+    }
 
-    $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $sourceFile.FullName).Replace($windowsPathSeparator, '/')
-    $lineNumber = ($scriptText.Substring(0, $separatorMatch.Index) -split "`n").Count
-    Fail "$relativePath contains a Windows path-like separator at line $lineNumber. Regex escape sequences are permitted; path separators are not."
+    $regexStringOffsets = [System.Collections.Generic.HashSet[int]]::new()
+    $regexVariableNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $assignments = @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst]
+    }, $true))
+
+    foreach ($assignment in $assignments) {
+        $variable = $assignment.Left -as [System.Management.Automation.Language.VariableExpressionAst]
+        if ($null -ne $variable -and
+            ($variable.VariablePath.UserPath -match '(?i)(pattern|regex)' -or
+                $variable.VariablePath.UserPath -in @('re', 'regex', 'pattern'))) {
+            [void]$regexVariableNames.Add($variable.VariablePath.UserPath)
+        }
+    }
+
+    foreach ($binaryExpression in @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.BinaryExpressionAst]
+    }, $true))) {
+        $operatorName = [string]$binaryExpression.Operator
+        if ($operatorName -notmatch '(?i)(match|replace|split)') { continue }
+
+        $operand = $binaryExpression.Right
+        if ($operatorName -match '(?i)replace' -and
+            $operand -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+            if ($operand.Elements.Count -eq 0) { continue }
+            $operand = $operand.Elements[0]
+        }
+
+        Add-RegexStringNodes $operand $regexStringOffsets
+        Add-RegexVariables $operand $regexVariableNames
+    }
+
+    foreach ($memberExpression in @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]
+    }, $true))) {
+        if (-not $memberExpression.Static -or $memberExpression.Expression -isnot [System.Management.Automation.Language.TypeExpressionAst]) {
+            continue
+        }
+
+        $typeName = [string]$memberExpression.Expression.TypeName.FullName
+        if ($typeName -notin @('regex', 'System.Text.RegularExpressions.Regex')) { continue }
+
+        $memberName = [string]$memberExpression.Member.Value
+        if ($memberName -in @('Match', 'Matches', 'IsMatch', 'Replace', 'Split')) {
+            if ($memberExpression.Arguments.Count -gt 1) {
+                Add-RegexStringNodes $memberExpression.Arguments[1] $regexStringOffsets
+                Add-RegexVariables $memberExpression.Arguments[1] $regexVariableNames
+            }
+        }
+        elseif ($memberName -eq 'New' -and $memberExpression.Arguments.Count -gt 0) {
+            Add-RegexStringNodes $memberExpression.Arguments[0] $regexStringOffsets
+            Add-RegexVariables $memberExpression.Arguments[0] $regexVariableNames
+        }
+    }
+
+    # Resolve the small amount of assignment flow needed for pattern variables such as
+    # $windowsPathPattern. This keeps regex escapes allowed without allowing arbitrary
+    # strings merely because they contain a familiar escape such as \s.
+    for ($iteration = 0; $iteration -lt 8; $iteration++) {
+        $changed = $false
+        foreach ($assignment in $assignments) {
+            $variable = $assignment.Left -as [System.Management.Automation.Language.VariableExpressionAst]
+            if ($null -eq $variable -or -not $regexVariableNames.Contains($variable.VariablePath.UserPath)) { continue }
+
+            $before = $regexStringOffsets.Count
+            Add-RegexStringNodes $assignment.Right $regexStringOffsets
+            if ($regexStringOffsets.Count -ne $before) { $changed = $true }
+
+            foreach ($rhsVariable in @($assignment.Right.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.VariableExpressionAst]
+            }, $true))) {
+                if ($regexVariableNames.Add($rhsVariable.VariablePath.UserPath)) { $changed = $true }
+            }
+        }
+
+        if (-not $changed) { break }
+    }
+
+    $stringNodes = @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+            $node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+    }, $true))
+
+    foreach ($stringNode in $stringNodes) {
+        $value = [string]$stringNode.Value
+        if ($value.IndexOf($windowsPathSeparator) -lt 0) { continue }
+
+        $regexOperand = $regexStringOffsets.Contains($stringNode.Extent.StartOffset)
+        $constructed = Test-StringExpressionConstructed $stringNode
+        $violation = Get-StringBackslashViolation $value $regexOperand $constructed $windowsPathSeparator
+        if ($null -eq $violation) { continue }
+
+        $backslashOrdinal = 0
+        for ($valueIndex = 0; $valueIndex -lt $violation.Index; $valueIndex++) {
+            if ($value[$valueIndex] -eq $windowsPathSeparator) { $backslashOrdinal++ }
+        }
+
+        $rawIndex = -1
+        for ($extentIndex = 0; $extentIndex -lt $stringNode.Extent.Text.Length; $extentIndex++) {
+            if ($stringNode.Extent.Text[$extentIndex] -ne $windowsPathSeparator) { continue }
+            if ($backslashOrdinal -eq 0) {
+                $rawIndex = $extentIndex
+                break
+            }
+            $backslashOrdinal--
+        }
+
+        $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $sourceFile.FullName).Replace($windowsPathSeparator, '/')
+        $absoluteOffset = $stringNode.Extent.StartOffset + [Math]::Max($rawIndex, 0)
+        $lineNumber = ($scriptText.Substring(0, $absoluteOffset) -split "`n").Count
+        Fail "$relativePath contains a Windows path separator at line ${lineNumber}: $($violation.Reason). Regex escape sequences are permitted only in recognized regex operands."
+    }
 }
 
 $packInputFiles = @(
