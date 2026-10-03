@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0',
-    [string]$PackagePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'artifacts' 'packages' 'KeelMatrix.KeyRingGuard.0.1.0.nupkg')),
+    [string]$Version = $env:RELEASE_VERSION,
+    [string]$PackagePath = '',
     [string]$ExpectedPayloadPath = (Join-Path $PSScriptRoot 'ExpectedPackagePayload.txt'),
     [switch]$AllowMissingIcon
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Version)) { $Version = '0.1.0' }
+if ([string]::IsNullOrWhiteSpace($PackagePath)) {
+    $PackagePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'artifacts' 'packages' "KeelMatrix.KeyRingGuard.$Version.nupkg"))
+}
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $iconSource = Join-Path $repositoryRoot 'icon.png'

@@ -29,26 +29,20 @@ jobs:
 
       - name: Derive and validate release tag
         id: release-version
-        shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          $version = (& pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag $env:RELEASE_TAG | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) { throw 'Could not derive a release version from the tag.' }
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        run: pwsh -NoProfile -File scripts/GetReleaseVersion.ps1
 
       - name: Validate changelog and repository versions
-        shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
           EXPECTED_COMMIT: ${{ github.sha }}
-        run: pwsh -NoProfile -File scripts/Test-ChangelogContract.ps1 -Tag $env:RELEASE_TAG -ExpectedCommit $env:EXPECTED_COMMIT
+        run: pwsh -NoProfile -File scripts/Test-ChangelogContract.ps1
 
       - name: Restore from NuGet.org
         run: dotnet restore KeelMatrix.KeyRingGuard.sln --configfile NuGet.config --no-cache --force
 
       - name: Vulnerability audit
-        shell: pwsh
         run: pwsh -NoProfile -File scripts/Invoke-VulnerabilityAudit.ps1
 
       - name: Verify formatting
@@ -64,20 +58,14 @@ jobs:
         run: dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols -p:SymbolPackageFormat=snupkg -p:RequirePackageIcon=true -p:Version=${{ steps.release-version.outputs.version }} --output ./artifacts/packages
 
       - name: Inspect package
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/Inspect-Package.ps1 -Version ${{ steps.release-version.outputs.version }} -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.${{ steps.release-version.outputs.version }}.nupkg
-
-      - name: Validate exact artifact set
-        shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
-        run: |
-          $expected = @(
-            "KeelMatrix.KeyRingGuard.$env:RELEASE_VERSION.nupkg",
-            "KeelMatrix.KeyRingGuard.$env:RELEASE_VERSION.snupkg"
-          ) | Sort-Object
-          $actual = @(Get-ChildItem -LiteralPath ./artifacts/packages -File | Select-Object -ExpandProperty Name | Sort-Object)
-          if ((Compare-Object $expected $actual) -ne $null) { throw "Unexpected release artifact set. Expected: $($expected -join ', '). Actual: $($actual -join ', ')." }
+        run: pwsh -NoProfile -File scripts/Inspect-Package.ps1
+
+      - name: Validate exact artifact set
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
+        run: pwsh -NoProfile -File scripts/Test-ReleaseArtifactSet.ps1
 
       - name: Upload validated release artifacts
         uses: actions/upload-artifact@v4
@@ -104,17 +92,9 @@ jobs:
           path: ./artifacts/packages
 
       - name: Validate downloaded artifact set
-        shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:RELEASE_VERSION)) { throw 'The validation job did not provide a release version.' }
-          $expected = @(
-            "KeelMatrix.KeyRingGuard.$env:RELEASE_VERSION.nupkg",
-            "KeelMatrix.KeyRingGuard.$env:RELEASE_VERSION.snupkg"
-          ) | Sort-Object
-          $actual = @(Get-ChildItem -LiteralPath ./artifacts/packages -File | Select-Object -ExpandProperty Name | Sort-Object)
-          if ((Compare-Object $expected $actual) -ne $null) { throw "Unexpected downloaded release artifact set. Expected: $($expected -join ', '). Actual: $($actual -join ', ')." }
+        run: pwsh -NoProfile -File scripts/Test-ReleaseArtifactSet.ps1
 
       - name: Authenticate to NuGet.org
         id: nuget-login
@@ -123,12 +103,7 @@ jobs:
           user: dmitriyzen
 
       - name: Publish validated package
-        shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-        run: |
-          dotnet nuget push "./artifacts/packages/KeelMatrix.KeyRingGuard.$env:RELEASE_VERSION.nupkg" --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet nuget push "./artifacts/packages/KeelMatrix.KeyRingGuard.$env:RELEASE_VERSION.snupkg" --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: pwsh -NoProfile -File scripts/Publish-ReleaseArtifacts.ps1

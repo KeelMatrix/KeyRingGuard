@@ -73,8 +73,8 @@ function Get-ImportedScriptPaths(
         if ($command.GetCommandName() -cne 'Import-Module') { continue }
 
         $pathExpression = @($command.CommandElements | Select-Object -Skip 1 | Where-Object {
-                $_ -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
-                $_ -is [System.Management.Automation.Language.ParenExpressionAst]
+                $_ -is [System.Management.Automation.Language.ParenExpressionAst] -or
+                ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -notmatch '^-')
             } | Select-Object -First 1)
         if ($pathExpression.Count -ne 1) {
             Fail "$(Get-RelativePath $ScriptPath) contains an Import-Module with a dynamic import path."
@@ -96,18 +96,94 @@ function Get-ImportedScriptPaths(
     return $imports.ToArray()
 }
 
+function Resolve-WorkflowScriptPath([string]$RawPath, [string]$Description) {
+    $path = $RawPath.Trim()
+    if ($path.Length -ge 2 -and
+        (($path[0] -eq '"' -and $path[$path.Length - 1] -eq '"') -or
+         ($path[0] -eq "'" -and $path[$path.Length - 1] -eq "'"))) {
+        $path = $path.Substring(1, $path.Length - 2)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($path) -or $path -match '[`$(){}+;,]') {
+        Fail "$Description uses a non-literal -File path '$RawPath'."
+    }
+
+    $normalizedPath = $path.Replace('/', [IO.Path]::DirectorySeparatorChar).Replace([char]92, [IO.Path]::DirectorySeparatorChar)
+    if ([IO.Path]::IsPathRooted($normalizedPath)) {
+        Fail "$Description must use a repository-relative literal -File path, not '$RawPath'."
+    }
+    if ([IO.Path]::GetExtension($normalizedPath) -ine '.ps1') {
+        Fail "$Description must invoke a .ps1 file, not '$RawPath'."
+    }
+
+    $resolvedPath = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot $normalizedPath))
+    $rootPath = [IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([char[]]@([char]92, [char]47))
+    $rootPrefix = $rootPath + [IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        Fail "$Description resolves outside the repository: '$RawPath'."
+    }
+    return $resolvedPath
+}
+
 if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { Fail "Release workflow '$WorkflowPath' does not exist." }
 if (-not (Test-Path -LiteralPath $RepositoryRoot -PathType Container)) { Fail "Repository root '$RepositoryRoot' does not exist." }
 
 $workflowText = Get-Content -Raw -LiteralPath $WorkflowPath
-$scriptNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($match in [regex]::Matches($workflowText, '(?i)scripts[\\/](?<name>[A-Za-z0-9_.-]+[.]ps1)')) {
-    [void]$scriptNames.Add($match.Groups['name'].Value)
+$workflowLines = [regex]::Split($workflowText, "`r?`n")
+$scriptRoots = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$commandPattern = '(?i)(?<![A-Za-z0-9_.-])(?<command>pwsh(?:[.]exe)?|powershell(?:[.]exe)?)(?![A-Za-z0-9_.-])(?<arguments>.*)$'
+$filePattern = '(?i)(?:^|\s)-File(?:\s*=\s*|\s+)(?<path>"[^"]*"|''[^'']*''|[^\s]+)'
+$currentStepName = '<unnamed release step>'
+$activeRunIndent = -1
+
+for ($lineIndex = 0; $lineIndex -lt $workflowLines.Count; $lineIndex++) {
+    $line = $workflowLines[$lineIndex]
+    if ($line -match '^\s*-\s+name:\s*(?<name>.+?)\s*$') {
+        $currentStepName = $Matches.name.Trim()
+    }
+
+    $shellMatch = [regex]::Match($line, '(?i)^\s*shell\s*:\s*(?<shell>pwsh(?:[.]exe)?|powershell(?:[.]exe)?)\s*$')
+    if ($shellMatch.Success) {
+        Fail "step '$currentStepName' at line $($lineIndex + 1) uses inline PowerShell through shell '$($shellMatch.Groups['shell'].Value)'. Invoke a committed .ps1 with a literal -File path instead."
+    }
+
+    $indent = ($line.Length - $line.TrimStart().Length)
+    $isRunLine = $false
+    if ($activeRunIndent -ge 0) {
+        if ($line.Trim().Length -eq 0 -or $indent -gt $activeRunIndent) {
+            $isRunLine = $true
+        }
+        else {
+            $activeRunIndent = -1
+        }
+    }
+
+    $runMatch = [regex]::Match($line, '^(?<indent>\s*)run\s*:\s*(?<value>.*)$')
+    if ($runMatch.Success) {
+        $isRunLine = $true
+        $runValue = $runMatch.Groups['value'].Value.Trim()
+        $activeRunIndent = if ($runValue -match '^[|>]') { $indent } else { -1 }
+    }
+    if (-not $isRunLine) { continue }
+
+    foreach ($commandMatch in @([regex]::Matches($line, $commandPattern))) {
+        $arguments = $commandMatch.Groups['arguments'].Value
+        $fileMatches = @([regex]::Matches($arguments, $filePattern))
+        if ($arguments -notmatch '(?i)-File' -or $fileMatches.Count -eq 0) {
+            Fail "step '$currentStepName' at line $($lineIndex + 1) invokes PowerShell without a literal -File path."
+        }
+
+        foreach ($fileMatch in $fileMatches) {
+            $rawPath = $fileMatch.Groups['path'].Value
+            [void]$scriptRoots.Add((Resolve-WorkflowScriptPath $rawPath "step '$currentStepName' at line $($lineIndex + 1)"))
+        }
+    }
 }
-if ($scriptNames.Count -eq 0) { Fail 'the release workflow does not invoke any PowerShell scripts.' }
+
+if ($scriptRoots.Count -eq 0) { Fail 'the release workflow does not invoke any PowerShell scripts through a literal -File path.' }
 
 $pending = [System.Collections.Generic.Queue[string]]::new()
-foreach ($scriptName in $scriptNames) { $pending.Enqueue((Join-Path $RepositoryRoot 'scripts' $scriptName)) }
+foreach ($scriptRoot in $scriptRoots) { $pending.Enqueue($scriptRoot) }
 $discovered = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $checkedFiles = [System.Collections.Generic.List[object]]::new()
 
@@ -115,7 +191,7 @@ while ($pending.Count -gt 0) {
     $scriptPath = [IO.Path]::GetFullPath($pending.Dequeue())
     if (-not $discovered.Add($scriptPath)) { continue }
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-        Fail "release workflow closure script '$([IO.Path]::GetFileName($scriptPath))' does not exist."
+        Fail "release workflow closure script '$([IO.Path]::GetRelativePath($RepositoryRoot, $scriptPath))' does not exist."
     }
 
     $scriptText = Get-Content -Raw -LiteralPath $scriptPath
@@ -145,5 +221,5 @@ foreach ($entry in $checkedFiles) {
     Fail "$(Get-RelativePath $entry.Path) contains U+005C at line $lineNumber. The release PowerShell closure allows no Windows path-separator characters."
 }
 
-Write-Output "Release PowerShell portability contract: PASS ($($checkedFiles.Count) scripts in the release-workflow invocation/dot-source closure contain no U+005C characters; empty allowlist). This proves the checked release PowerShell source cannot contain a literal Windows path separator. It does not prove runtime construction from character codes such as [char]92 or CI-only PowerShell outside the release closure; those remain covered by the cross-platform CI matrix."
+Write-Output "Release PowerShell portability contract: PASS ($($checkedFiles.Count) scripts in the fully file-backed release-workflow closure contain no U+005C characters; empty allowlist). This proves release-workflow PowerShell is rooted in literal -File paths and closed through static dot-sources, Import-Module paths, and using module paths. It does not prove runtime construction from character codes such as [char]92 inside a checked script."
 exit 0
