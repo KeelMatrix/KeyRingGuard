@@ -14,10 +14,10 @@ if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { Fail "Release 
 
 # The checked set is every PowerShell source file under the repository root, including scripts,
 # modules, data files, hooks, and other source locations. Git metadata is not release source.
-# The literal separator allowlist is intentionally empty.
 # This contract proves that PowerShell source text and the pack-sensitive MSBuild inputs use
-# portable path separators. It does not prove release-job portability for .json, .props,
-# NuGet.config, or separators constructed at runtime.
+# portable path separators. Regex escape sequences are not path separators and must remain
+# valid in cross-platform PowerShell source. It does not prove release-job portability for
+# .json, .props, NuGet.config, or separators constructed at runtime.
 $windowsPathSeparator = [char]92
 $gitMetadataRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot '.git'))
 $checkedEntries = @(
@@ -52,12 +52,13 @@ if ($checkedPowerShellFiles.Count -eq 0) { Fail 'the checked PowerShell source s
 
 foreach ($sourceFile in $checkedPowerShellFiles) {
     $scriptText = Get-Content -Raw -LiteralPath $sourceFile.FullName
-    $separatorIndex = $scriptText.IndexOf($windowsPathSeparator)
-    if ($separatorIndex -lt 0) { continue }
+    $windowsPathPattern = '(?i)(?:[A-Za-z]:\\[^\s''"`]+|(?:^|[\s''"`=({\[,;])(?:\.{1,2}|[A-Za-z0-9_.-]+)\\(?:[A-Za-z0-9_.-]+\\)*[A-Za-z0-9_.-]+)'
+    $separatorMatch = [regex]::Match($scriptText, $windowsPathPattern)
+    if (-not $separatorMatch.Success) { continue }
 
     $relativePath = [IO.Path]::GetRelativePath($RepositoryRoot, $sourceFile.FullName).Replace($windowsPathSeparator, '/')
-    $lineNumber = ($scriptText.Substring(0, $separatorIndex) -split "`n").Count
-    Fail "$relativePath contains a literal Windows path separator at line $lineNumber. The portability contract allowlist is empty."
+    $lineNumber = ($scriptText.Substring(0, $separatorMatch.Index) -split "`n").Count
+    Fail "$relativePath contains a Windows path-like separator at line $lineNumber. Regex escape sequences are permitted; path separators are not."
 }
 
 $packInputFiles = @(
@@ -148,4 +149,4 @@ while ($scriptNames.Count -gt 0) {
     }
 }
 
-Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; pack-sensitive MSBuild inputs checked; defaults use repository-derived path shape, RepositoryRoot containers resolve on this host, and produced artifact leaf defaults need not exist; literal separator allowlist: empty)."
+Write-Output "Release PowerShell source-text portability contract: PASS ($($checkedPowerShellFiles.Count) PowerShell source files checked; $($discovered.Count) workflow/helper scripts; pack-sensitive MSBuild inputs checked; defaults use repository-derived path shape, RepositoryRoot containers resolve on this host, and produced artifact leaf defaults need not exist; regex escapes ignored, path-like separators rejected)."
