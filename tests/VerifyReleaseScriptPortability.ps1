@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')),
-    [string]$WorkflowPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' '.github' 'workflows' 'release.yml'))
+    [string[]]$WorkflowPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,8 +10,173 @@ function Fail([string]$Message) {
     throw "Release script portability contract failed: $Message"
 }
 
+if (-not (Test-Path -LiteralPath $RepositoryRoot -PathType Container)) {
+    Fail "Repository root '$RepositoryRoot' does not exist."
+}
+$RepositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([char[]]@([char]92, [char]47))
+$repositoryPrefix = $RepositoryRoot + [IO.Path]::DirectorySeparatorChar
+
 function Get-RelativePath([string]$Path) {
     return [IO.Path]::GetRelativePath($RepositoryRoot, $Path).Replace([char]92, '/')
+}
+
+function Assert-ContainedPath([string]$Path, [string]$Description) {
+    $resolvedPath = [IO.Path]::GetFullPath($Path)
+    if (-not $resolvedPath.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        Fail "$Description resolves outside the repository: '$Path'."
+    }
+    return $resolvedPath
+}
+
+function Assert-NoReparsePoint([string]$Path, [string]$Description) {
+    $currentPath = [IO.Path]::GetFullPath($Path)
+    while ($true) {
+        $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Fail "$Description uses a symlink or reparse-point path '$([IO.Path]::GetRelativePath($RepositoryRoot, $currentPath))'."
+        }
+
+        if ($currentPath.TrimEnd([char[]]@([char]92, [char]47)) -ieq $RepositoryRoot) { break }
+        $parentPath = Split-Path -Parent $currentPath
+        if ([string]::IsNullOrWhiteSpace($parentPath) -or $parentPath -ieq $currentPath) {
+            Fail "$Description has an unresolved parent path."
+        }
+        $currentPath = $parentPath
+    }
+}
+
+function Remove-YamlComment([string]$Value) {
+    $inSingle = $false
+    $inDouble = $false
+    $escaped = $false
+    for ($index = 0; $index -lt $Value.Length; $index++) {
+        $character = $Value[$index]
+        if ($inDouble -and $escaped) {
+            $escaped = $false
+            continue
+        }
+        if ($inDouble -and $character -eq [char]92) {
+            $escaped = $true
+            continue
+        }
+        if (-not $inDouble -and $character -eq "'") {
+            if ($inSingle -and $index + 1 -lt $Value.Length -and $Value[$index + 1] -eq "'") {
+                $index++
+                continue
+            }
+            $inSingle = -not $inSingle
+            continue
+        }
+        if (-not $inSingle -and $character -eq '"') {
+            $inDouble = -not $inDouble
+            continue
+        }
+        if (-not $inSingle -and -not $inDouble -and $character -eq '#' -and
+            ($index -eq 0 -or [char]::IsWhiteSpace($Value[$index - 1]))) {
+            return $Value.Substring(0, $index).TrimEnd()
+        }
+    }
+    if ($inSingle -or $inDouble) { Fail "YAML scalar '$Value' has an unterminated quote." }
+    return $Value.TrimEnd()
+}
+
+function Convert-YamlScalar([string]$RawValue, [string]$Description) {
+    $value = (Remove-YamlComment $RawValue).Trim()
+    if ([string]::IsNullOrWhiteSpace($value)) { Fail "$Description has an empty shell value." }
+    if ($value.StartsWith('"')) {
+        if (-not $value.EndsWith('"')) { Fail "$Description has an ambiguous quoted shell value '$RawValue'." }
+        try {
+            return (ConvertFrom-Json -InputObject $value -ErrorAction Stop).ToString()
+        }
+        catch {
+            Fail "$Description has an invalid quoted shell value '$RawValue'."
+        }
+    }
+    if ($value.StartsWith("'")) {
+        if (-not $value.EndsWith("'")) { Fail "$Description has an ambiguous quoted shell value '$RawValue'." }
+        return $value.Substring(1, $value.Length - 2).Replace("''", "'")
+    }
+    if ($value.Contains('"') -or $value.Contains("'")) {
+        Fail "$Description has an ambiguous shell value '$RawValue'."
+    }
+    return $value
+}
+
+function Assert-ShellIsNotPowerShell([string]$RawValue, [string]$Description) {
+    $shell = (Convert-YamlScalar $RawValue $Description).Trim()
+    if ($shell -match '(?i)^(?:pwsh|powershell)(?:\.exe)?(?:\s|$)') {
+        Fail "$Description uses inline PowerShell shell '$RawValue'. Invoke a committed .ps1 with a literal -File path instead."
+    }
+
+    $shellName = ($shell -split '\s+', 2)[0].Trim('"', "'").ToLowerInvariant()
+    $knownNonPowerShellShells = @(
+        'bash', 'sh', 'dash', 'zsh', 'fish', 'cmd', 'cmd.exe',
+        'python', 'python3', 'node', 'ruby', 'perl'
+    )
+    if ($shellName -notin $knownNonPowerShellShells) {
+        Fail "$Description has a shell value that cannot be classified as non-PowerShell: '$RawValue'."
+    }
+}
+
+function Test-TagPushWorkflow([string]$Text) {
+    $lines = [regex]::Split($Text, "`r?`n")
+    $onIndent = -1
+    $pushIndent = -1
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        $line = $lines[$index]
+        if ($line.Trim().Length -eq 0 -or $line.TrimStart().StartsWith('#')) { continue }
+        $indent = $line.Length - $line.TrimStart().Length
+        $content = Remove-YamlComment $line.Trim()
+        if ($onIndent -lt 0) {
+            if ($indent -eq 0 -and $content -match '^(?:on|"on"|''on'')\s*:') { $onIndent = $indent }
+            continue
+        }
+        if ($indent -le $onIndent) { break }
+        if ($content -match '^push\s*:\s*(?<value>.*)$') {
+            $pushIndent = $indent
+            if ($Matches.value -match '(?i)tags\s*:') { return $true }
+            continue
+        }
+        if ($pushIndent -ge 0 -and $indent -gt $pushIndent -and $content -match '^tags\s*:') {
+            return $true
+        }
+        if ($pushIndent -ge 0 -and $indent -le $pushIndent) { $pushIndent = -1 }
+    }
+    return $false
+}
+
+function Get-WorkflowFiles() {
+    $workflowDirectory = Join-Path $RepositoryRoot '.github' 'workflows'
+    if (-not (Test-Path -LiteralPath $workflowDirectory -PathType Container)) {
+        Fail "Workflow directory '$workflowDirectory' does not exist."
+    }
+    $files = @(Get-ChildItem -LiteralPath $workflowDirectory -File -Force | Where-Object { $_.Extension -in @('.yml', '.yaml') } | Sort-Object FullName)
+    if ($files.Count -eq 0) { Fail 'No workflow YAML files were found.' }
+    return @($files | ForEach-Object { [IO.Path]::GetFullPath($_.FullName) })
+}
+
+function Resolve-WorkflowPaths([string[]]$RequestedPaths) {
+    $allWorkflows = @(Get-WorkflowFiles)
+    $tagWorkflows = @($allWorkflows | Where-Object { Test-TagPushWorkflow (Get-Content -Raw -LiteralPath $_) })
+    if ($tagWorkflows.Count -eq 0) { Fail 'No tag-triggered workflow YAML files were found.' }
+
+    if ($null -eq $RequestedPaths -or $RequestedPaths.Count -eq 0) {
+        return $tagWorkflows
+    }
+
+    $requested = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($rawPath in $RequestedPaths) {
+        $path = [IO.Path]::GetFullPath($rawPath)
+        Assert-ContainedPath $path 'Workflow path' | Out-Null
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Fail "Workflow '$rawPath' does not exist." }
+        [void]$requested.Add($path)
+    }
+    $unvalidated = @($tagWorkflows | Where-Object { -not $requested.Contains($_) })
+    if ($unvalidated.Count -gt 0) {
+        $names = $unvalidated | ForEach-Object { Get-RelativePath $_ }
+        Fail "tag-triggered workflow files were not validated: $($names -join ', ')."
+    }
+    return @($requested | Sort-Object)
 }
 
 function Resolve-StaticPathExpression(
@@ -96,6 +261,61 @@ function Get-ImportedScriptPaths(
     return $imports.ToArray()
 }
 
+function Resolve-ScriptLiteralPath([string]$RawPath, [string]$ScriptPath, [string]$Description) {
+    $path = $RawPath.Trim()
+    if ($path.Length -ge 2 -and
+        (($path[0] -eq '"' -and $path[$path.Length - 1] -eq '"') -or
+         ($path[0] -eq "'" -and $path[$path.Length - 1] -eq "'"))) {
+        $path = $path.Substring(1, $path.Length - 2)
+    }
+    if ([string]::IsNullOrWhiteSpace($path) -or $path -match '[`$(){}+;,\*\?]') {
+        Fail "$Description uses a non-literal -File path '$RawPath'."
+    }
+    $normalizedPath = $path.Replace('/', [IO.Path]::DirectorySeparatorChar).Replace([char]92, [IO.Path]::DirectorySeparatorChar)
+    if ([IO.Path]::IsPathRooted($normalizedPath)) {
+        Fail "$Description must use a script-relative literal -File path, not '$RawPath'."
+    }
+    if ([IO.Path]::GetExtension($normalizedPath) -ine '.ps1') {
+        Fail "$Description must invoke a .ps1 file, not '$RawPath'."
+    }
+    return Assert-ContainedPath ([IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $ScriptPath) $normalizedPath))) $Description
+}
+
+function Get-NestedPowerShellScriptPaths(
+    [System.Management.Automation.Language.Ast]$Ast,
+    [string]$ScriptPath
+) {
+    $nested = [System.Collections.Generic.List[string]]::new()
+    foreach ($command in @($Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst]
+            }, $true))) {
+        $commandName = $command.GetCommandName()
+        if ($commandName -notmatch '^(?i:pwsh|powershell)(?:\.exe)?$') { continue }
+
+        $fileParameters = @($command.CommandElements | Where-Object {
+                $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'File'
+            })
+        if ($fileParameters.Count -ne 1) {
+            Fail "$(Get-RelativePath $ScriptPath) launches nested PowerShell without exactly one literal -File target."
+        }
+        $fileParameter = $fileParameters[0]
+        $argument = $fileParameter.Argument
+        if ($null -eq $argument) {
+            $parameterIndex = [array]::IndexOf([array]$command.CommandElements, $fileParameter)
+            if ($parameterIndex + 1 -ge $command.CommandElements.Count) {
+                Fail "$(Get-RelativePath $ScriptPath) has a nested PowerShell -File parameter without a target."
+            }
+            $argument = $command.CommandElements[$parameterIndex + 1]
+        }
+        if ($argument -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) {
+            Fail "$(Get-RelativePath $ScriptPath) has a non-literal nested PowerShell -File target '$($argument.Extent.Text)'."
+        }
+        [void]$nested.Add((Resolve-ScriptLiteralPath $argument.Value $ScriptPath "$(Get-RelativePath $ScriptPath) nested PowerShell launch"))
+    }
+    return $nested.ToArray()
+}
+
 function Resolve-WorkflowScriptPath([string]$RawPath, [string]$Description) {
     $path = $RawPath.Trim()
     if ($path.Length -ge 2 -and
@@ -104,7 +324,7 @@ function Resolve-WorkflowScriptPath([string]$RawPath, [string]$Description) {
         $path = $path.Substring(1, $path.Length - 2)
     }
 
-    if ([string]::IsNullOrWhiteSpace($path) -or $path -match '[`$(){}+;,]') {
+    if ([string]::IsNullOrWhiteSpace($path) -or $path -match '[`$(){}+;,\*\?]') {
         Fail "$Description uses a non-literal -File path '$RawPath'."
     }
 
@@ -116,71 +336,69 @@ function Resolve-WorkflowScriptPath([string]$RawPath, [string]$Description) {
         Fail "$Description must invoke a .ps1 file, not '$RawPath'."
     }
 
-    $resolvedPath = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot $normalizedPath))
-    $rootPath = [IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([char[]]@([char]92, [char]47))
-    $rootPrefix = $rootPath + [IO.Path]::DirectorySeparatorChar
-    if (-not $resolvedPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-        Fail "$Description resolves outside the repository: '$RawPath'."
-    }
-    return $resolvedPath
+    return Assert-ContainedPath ([IO.Path]::GetFullPath((Join-Path $RepositoryRoot $normalizedPath))) $Description
 }
 
-if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { Fail "Release workflow '$WorkflowPath' does not exist." }
-if (-not (Test-Path -LiteralPath $RepositoryRoot -PathType Container)) { Fail "Repository root '$RepositoryRoot' does not exist." }
-
-$workflowText = Get-Content -Raw -LiteralPath $WorkflowPath
-$workflowLines = [regex]::Split($workflowText, "`r?`n")
+$workflowPaths = @(Resolve-WorkflowPaths $WorkflowPath)
 $scriptRoots = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-$commandPattern = '(?i)(?<![A-Za-z0-9_.-])(?<command>pwsh(?:[.]exe)?|powershell(?:[.]exe)?)(?![A-Za-z0-9_.-])(?<arguments>.*)$'
-$filePattern = '(?i)(?:^|\s)-File(?:\s*=\s*|\s+)(?<path>"[^"]*"|''[^'']*''|[^\s]+)'
-$currentStepName = '<unnamed release step>'
-$activeRunIndent = -1
+$commandPattern = '(?i)(?<![A-Za-z0-9_.-])(?:pwsh(?:[.]exe)?|powershell(?:[.]exe)?)(?![A-Za-z0-9_.-])(?<arguments>.*)$'
+$filePattern = '(?i)(?:^|[\s;&|])-[\s]*File(?:\s*=\s*|\s+)(?<path>"[^"]*"|''[^'']*''|[^\s;&|]+)'
 
-for ($lineIndex = 0; $lineIndex -lt $workflowLines.Count; $lineIndex++) {
-    $line = $workflowLines[$lineIndex]
-    if ($line -match '^\s*-\s+name:\s*(?<name>.+?)\s*$') {
-        $currentStepName = $Matches.name.Trim()
-    }
-
-    $shellMatch = [regex]::Match($line, '(?i)^\s*shell\s*:\s*(?<shell>pwsh(?:[.]exe)?|powershell(?:[.]exe)?)\s*$')
-    if ($shellMatch.Success) {
-        Fail "step '$currentStepName' at line $($lineIndex + 1) uses inline PowerShell through shell '$($shellMatch.Groups['shell'].Value)'. Invoke a committed .ps1 with a literal -File path instead."
-    }
-
-    $indent = ($line.Length - $line.TrimStart().Length)
-    $isRunLine = $false
-    if ($activeRunIndent -ge 0) {
-        if ($line.Trim().Length -eq 0 -or $indent -gt $activeRunIndent) {
-            $isRunLine = $true
-        }
-        else {
-            $activeRunIndent = -1
-        }
-    }
-
-    $runMatch = [regex]::Match($line, '^(?<indent>\s*)run\s*:\s*(?<value>.*)$')
-    if ($runMatch.Success) {
-        $isRunLine = $true
-        $runValue = $runMatch.Groups['value'].Value.Trim()
-        $activeRunIndent = if ($runValue -match '^[|>]') { $indent } else { -1 }
-    }
-    if (-not $isRunLine) { continue }
-
-    foreach ($commandMatch in @([regex]::Matches($line, $commandPattern))) {
-        $arguments = $commandMatch.Groups['arguments'].Value
-        $fileMatches = @([regex]::Matches($arguments, $filePattern))
-        if ($arguments -notmatch '(?i)-File' -or $fileMatches.Count -eq 0) {
-            Fail "step '$currentStepName' at line $($lineIndex + 1) invokes PowerShell without a literal -File path."
+foreach ($workflowPath in $workflowPaths) {
+    $workflowText = Get-Content -Raw -LiteralPath $workflowPath
+    $workflowLines = [regex]::Split($workflowText, "`r?`n")
+    $currentStepName = '<unnamed release step>'
+    $activeRunIndent = -1
+    for ($lineIndex = 0; $lineIndex -lt $workflowLines.Count; $lineIndex++) {
+        $line = $workflowLines[$lineIndex]
+        $indent = $line.Length - $line.TrimStart().Length
+        if ($line -match '^\s*-\s+name:\s*(?<name>.+?)\s*$') {
+            $currentStepName = (Remove-YamlComment $Matches.name).Trim()
         }
 
-        foreach ($fileMatch in $fileMatches) {
-            $rawPath = $fileMatch.Groups['path'].Value
-            [void]$scriptRoots.Add((Resolve-WorkflowScriptPath $rawPath "step '$currentStepName' at line $($lineIndex + 1)"))
+        if ($line -match '^\s*shell\s*:\s*(?<shell>.*)$') {
+            Assert-ShellIsNotPowerShell $Matches.shell "workflow '$(Get-RelativePath $workflowPath)' step '$currentStepName' at line $($lineIndex + 1)"
+        }
+
+        $runLine = $null
+        if ($activeRunIndent -ge 0) {
+            if ($line.Trim().Length -eq 0 -or $indent -gt $activeRunIndent) {
+                $runLine = $line.Trim()
+            }
+            else {
+                $activeRunIndent = -1
+            }
+        }
+
+        $runMatch = [regex]::Match($line, '^(?<indent>\s*)run\s*:\s*(?<value>.*)$')
+        if ($runMatch.Success) {
+            $rawRunValue = $runMatch.Groups['value'].Value.Trim()
+            if ($rawRunValue -match '^[|>]') {
+                $activeRunIndent = $runMatch.Groups['indent'].Value.Length
+                $runLine = $null
+            }
+            else {
+                $runLine = Remove-YamlComment $rawRunValue
+                $activeRunIndent = -1
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($runLine)) { continue }
+
+        foreach ($commandMatch in @([regex]::Matches($runLine, $commandPattern))) {
+            $arguments = $commandMatch.Groups['arguments'].Value
+            $fileMatches = @([regex]::Matches($arguments, $filePattern))
+            if ($arguments -notmatch '(?i)-\s*File' -or $fileMatches.Count -eq 0) {
+                Fail "workflow '$(Get-RelativePath $workflowPath)' step '$currentStepName' at line $($lineIndex + 1) invokes PowerShell without a literal -File path."
+            }
+            foreach ($fileMatch in $fileMatches) {
+                $rawPath = $fileMatch.Groups['path'].Value
+                [void]$scriptRoots.Add((Resolve-WorkflowScriptPath $rawPath "workflow '$(Get-RelativePath $workflowPath)' step '$currentStepName' at line $($lineIndex + 1)"))
+            }
         }
     }
 }
 
-if ($scriptRoots.Count -eq 0) { Fail 'the release workflow does not invoke any PowerShell scripts through a literal -File path.' }
+if ($scriptRoots.Count -eq 0) { Fail 'the tag-triggered release workflows do not invoke any PowerShell scripts through a literal -File path.' }
 
 $pending = [System.Collections.Generic.Queue[string]]::new()
 foreach ($scriptRoot in $scriptRoots) { $pending.Enqueue($scriptRoot) }
@@ -193,6 +411,7 @@ while ($pending.Count -gt 0) {
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         Fail "release workflow closure script '$([IO.Path]::GetRelativePath($RepositoryRoot, $scriptPath))' does not exist."
     }
+    Assert-NoReparsePoint $scriptPath 'Release workflow closure script'
 
     $scriptText = Get-Content -Raw -LiteralPath $scriptPath
     $tokens = $null
@@ -204,10 +423,18 @@ while ($pending.Count -gt 0) {
     foreach ($importedPath in @(Get-ImportedScriptPaths $ast $scriptPath)) {
         $extension = [IO.Path]::GetExtension($importedPath)
         if ($extension -notin @('.ps1', '.psm1', '.psd1')) { continue }
+        Assert-ContainedPath $importedPath "$(Get-RelativePath $scriptPath) static import" | Out-Null
         if (-not (Test-Path -LiteralPath $importedPath -PathType Leaf)) {
             Fail "$(Get-RelativePath $scriptPath) imports missing file '$(Get-RelativePath $importedPath)'."
         }
         $pending.Enqueue($importedPath)
+    }
+
+    foreach ($nestedPath in @(Get-NestedPowerShellScriptPaths $ast $scriptPath)) {
+        if (-not (Test-Path -LiteralPath $nestedPath -PathType Leaf)) {
+            Fail "$(Get-RelativePath $scriptPath) launches missing nested script '$(Get-RelativePath $nestedPath)'."
+        }
+        $pending.Enqueue($nestedPath)
     }
 }
 
@@ -221,5 +448,5 @@ foreach ($entry in $checkedFiles) {
     Fail "$(Get-RelativePath $entry.Path) contains U+005C at line $lineNumber. The release PowerShell closure allows no Windows path-separator characters."
 }
 
-Write-Output "Release PowerShell portability contract: PASS ($($checkedFiles.Count) scripts in the fully file-backed release-workflow closure contain no U+005C characters; empty allowlist). This proves release-workflow PowerShell is rooted in literal -File paths and closed through static dot-sources, Import-Module paths, and using module paths. It does not prove runtime construction from character codes such as [char]92 inside a checked script."
+Write-Output "Release PowerShell portability contract: PASS ($($checkedFiles.Count) scripts in the recognized, YAML-validated static set contain no U+005C characters. The set is closed through literal workflow -File paths, static dot-sources/Import-Module/using-module paths, and literal nested PowerShell -File paths, with repository containment and no reparse-point checked scripts. This proves only those recognized YAML/PowerShell static paths; it does not prove complete PowerShell reachability or runtime-generated commands, paths, scripts, workflow expressions, dynamic imports, reflection, native launches, shell indirection, or files outside the recognized set.)"
 exit 0

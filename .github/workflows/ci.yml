@@ -97,6 +97,20 @@ jobs:
       - name: Pack package and symbols
         run: dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg -p:RequirePackageIcon=false --output ./artifacts/packages
 
+      - name: Derive release version on Ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RELEASE_TAG: v0.1.0
+        run: pwsh -NoProfile -File scripts/GetReleaseVersion.ps1 -Tag "$RELEASE_TAG" -OutputPath "$RUNNER_TEMP/release-version.txt"
+
+      - name: Validate packed release artifacts on Ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        run: pwsh -NoProfile -File scripts/Test-ReleaseArtifactSet.ps1 -Version 0.1.0 -PackageDirectory ./artifacts/packages
+
+      - name: Dry-run release publication on Ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        run: pwsh -NoProfile -File scripts/Publish-ReleaseArtifacts.ps1 -Version 0.1.0 -PackageDirectory ./artifacts/packages -DryRun
+
       - name: Inspect package contents and optional icon
         shell: pwsh
         run: pwsh -NoProfile -File scripts/Inspect-Package.ps1 -Version 0.1.0 -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.0.1.0.nupkg -AllowMissingIcon

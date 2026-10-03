@@ -1,9 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$WorkflowPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' '.github' 'workflows' 'release.yml'))
+    [string]$WorkflowPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' '.github' 'workflows' 'release.yml')),
+    [string]$PublisherPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'scripts' 'Publish-ReleaseArtifacts.ps1')),
+    [string]$ArtifactSetPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'scripts' 'Test-ReleaseArtifactSet.ps1'))
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $regexEscape = [char]92
 $whitespace = $regexEscape + 's'
 $literalStar = $regexEscape + '*'
@@ -35,13 +38,117 @@ Assert-Contains $text 'dotnet-version: 10.0.401' 'release validation must instal
 
 $publishStart = $text.IndexOf('      - name: Publish validated package', [StringComparison]::Ordinal)
 if ($publishStart -lt 0) { throw 'Release workflow contract failed: the publish step is missing.' }
-$publishScriptPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'scripts' 'Publish-ReleaseArtifacts.ps1'))
-if (-not (Test-Path -LiteralPath $publishScriptPath -PathType Leaf)) {
-    throw "Release workflow contract failed: publish script is missing: $publishScriptPath"
+$publishJobStart = $text.IndexOf("  publish:", [StringComparison]::Ordinal)
+if ($publishJobStart -lt 0 -or $publishJobStart -gt $publishStart) {
+    throw 'Release workflow contract failed: the publish job is missing.'
 }
-$publishScript = Get-Content -Raw -LiteralPath $publishScriptPath
-if ($publishScript -notmatch '(?m)dotnet\s+nuget\s+push') {
-    throw 'Release workflow contract failed: the committed publish script does not push NuGet artifacts.'
+$publishCheckout = $text.IndexOf("        uses: actions/checkout@v4", $publishJobStart, [StringComparison]::Ordinal)
+$publishDownload = $text.IndexOf("        uses: actions/download-artifact@v4", $publishJobStart, [StringComparison]::Ordinal)
+if ($publishCheckout -lt 0 -or $publishDownload -lt 0 -or $publishCheckout -gt $publishDownload) {
+    throw 'Release workflow contract failed: the publish job must check out repository content before downloading artifacts.'
+}
+$downloadStepStart = $text.IndexOf('      - name: Download validated release artifacts', $publishCheckout, [StringComparison]::Ordinal)
+if ($downloadStepStart -lt 0) {
+    throw 'Release workflow contract failed: the checkout-removal mutation fixture could not locate the download step.'
+}
+$checkoutMutation = $text.Remove($publishCheckout, $downloadStepStart - $publishCheckout)
+if ($checkoutMutation.Length -ge $text.Length) {
+    throw 'Release workflow contract failed: the checkout-removal mutation fixture was not applied.'
+}
+$mutationCheckout = $checkoutMutation.IndexOf("        uses: actions/checkout@v4", $publishJobStart, [StringComparison]::Ordinal)
+$mutationDownload = $checkoutMutation.IndexOf("        uses: actions/download-artifact@v4", $publishJobStart, [StringComparison]::Ordinal)
+if ($mutationCheckout -ge 0 -and $mutationCheckout -lt $mutationDownload) {
+    throw 'Release workflow contract failed: removing the publish checkout still passed the checkout assertion.'
+}
+
+if (-not (Test-Path -LiteralPath $PublisherPath -PathType Leaf)) {
+    throw "Release workflow contract failed: publish script is missing: $PublisherPath"
+}
+$publishScript = Get-Content -Raw -LiteralPath $PublisherPath
+function Assert-PublisherContract([string]$ScriptText) {
+    if ($ScriptText -notmatch '(?m)dotnet\s+nuget\s+push\s+\$packagePath\s+--source\s+https://api\.nuget\.org/v3/index\.json\s+--api-key\s+\$ApiKey') {
+        throw 'Release workflow contract failed: the committed publish script does not push the validated package paths.'
+    }
+    if ($ScriptText -notmatch '(?s)\$expected\s*=\s*@\(\s*"KeelMatrix\.KeyRingGuard\.\$Version\.nupkg"\s*"KeelMatrix\.KeyRingGuard\.\$Version\.snupkg"') {
+        throw 'Release workflow contract failed: the publisher must define the exact nupkg and snupkg artifact set in deterministic order.'
+    }
+    if ($ScriptText -notmatch '(?m)Compare-Object\s+\(\$expected\s*\|\s*Sort-Object\)\s+\(\$actual\s*\|\s*Sort-Object\)') {
+        throw 'Release workflow contract failed: the publisher must fail closed on missing or unexpected artifacts.'
+    }
+    if ($ScriptText -notmatch '(?m)\$LASTEXITCODE\s+-ne\s+0') {
+        throw 'Release workflow contract failed: the publisher must propagate a nonzero NuGet push exit code.'
+    }
+}
+Assert-PublisherContract $publishScript
+
+$publisherMutationRoot = Join-Path ([IO.Path]::GetTempPath()) ('keyringguard-publisher-contract-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $publisherMutationRoot -Force | Out-Null
+try {
+    $mutatedPublisherPath = Join-Path $publisherMutationRoot 'Publish-ReleaseArtifacts.ps1'
+    $mutatedPublisher = $publishScript.Replace(
+        'dotnet nuget push $packagePath',
+        'dotnet nuget push (Join-Path $PackageDirectory "unrelated-package.nupkg")')
+    if ($mutatedPublisher -ceq $publishScript) {
+        throw 'Release workflow contract failed: the publisher mutation fixture was not applied.'
+    }
+    Set-Content -LiteralPath $mutatedPublisherPath -Value $mutatedPublisher -NoNewline
+    $mutationRejected = $false
+    try {
+        Assert-PublisherContract (Get-Content -Raw -LiteralPath $mutatedPublisherPath)
+    }
+    catch {
+        $mutationRejected = $true
+    }
+    if (-not $mutationRejected) {
+        throw 'Release workflow contract failed: a publisher mutation that pushes only an unrelated artifact passed the contract.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $publisherMutationRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if (-not (Test-Path -LiteralPath $ArtifactSetPath -PathType Leaf)) {
+    throw "Release workflow contract failed: artifact-set script is missing: $ArtifactSetPath"
+}
+$artifactSetScript = Get-Content -Raw -LiteralPath $ArtifactSetPath
+if ($artifactSetScript -notmatch '(?s)\$expected\s*=\s*@\(\s*"KeelMatrix\.KeyRingGuard\.\$Version\.nupkg"\s*"KeelMatrix\.KeyRingGuard\.\$Version\.snupkg"') {
+    throw 'Release workflow contract failed: the artifact-set script must define exactly the nupkg and snupkg names.'
+}
+if ($artifactSetScript -notmatch '(?m)Compare-Object\s+\$expected\s+\$actual') {
+    throw 'Release workflow contract failed: the artifact-set script must fail closed on missing or unexpected artifacts.'
+}
+
+$artifactContractRoot = Join-Path ([IO.Path]::GetTempPath()) ('keyringguard-artifact-contract-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $artifactContractRoot -Force | Out-Null
+try {
+    function New-ArtifactFixture([string]$Name, [string[]]$Names) {
+        $directory = Join-Path $artifactContractRoot $Name
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        foreach ($name in $Names) {
+            New-Item -ItemType File -Path (Join-Path $directory $name) -Force | Out-Null
+        }
+        return $directory
+    }
+    function Invoke-ArtifactSet([string]$Directory) {
+        $null = @(Invoke-NestedPwsh -NoProfile -File $ArtifactSetPath -Version 0.1.0 -PackageDirectory $Directory 2>&1)
+        return $LASTEXITCODE
+    }
+    $expectedArtifactNames = @(
+        'KeelMatrix.KeyRingGuard.0.1.0.nupkg'
+        'KeelMatrix.KeyRingGuard.0.1.0.snupkg'
+    )
+    if ((Invoke-ArtifactSet (New-ArtifactFixture 'valid' $expectedArtifactNames)) -ne 0) {
+        throw 'Release workflow contract failed: the unmodified artifact-set script rejected the exact two-file set.'
+    }
+    if ((Invoke-ArtifactSet (New-ArtifactFixture 'missing' @($expectedArtifactNames[0]))) -eq 0) {
+        throw 'Release workflow contract failed: the artifact-set script accepted a missing symbol artifact.'
+    }
+    if ((Invoke-ArtifactSet (New-ArtifactFixture 'unexpected' ($expectedArtifactNames + 'unrelated-package.nupkg'))) -eq 0) {
+        throw 'Release workflow contract failed: the artifact-set script accepted an unexpected artifact.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $artifactContractRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $onBlock = [regex]::Match($text, ('(?ms)^on:' + $whitespace + '*(?<body>.*?)(?=^permissions:|' + $endOfString + ')')).Groups['body'].Value
