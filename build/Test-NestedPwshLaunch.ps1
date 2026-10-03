@@ -74,33 +74,12 @@ function Get-ParsedCommandRecords(
 }
 
 function Get-CSharpLaunchViolations([string]$Path) {
-    $lines = [IO.File]::ReadAllLines($Path)
+    $source = [IO.File]::ReadAllText($Path)
     $violations = [System.Collections.Generic.List[string]]::new()
-    for ($index = 0; $index -lt $lines.Count; $index++) {
-        if ($lines[$index] -notmatch '(?<![\w:])new\s+(?:System\.Diagnostics\.)?ProcessStartInfo\b' -and
-            $lines[$index] -notmatch '\bProcessStartInfo\s+\w+\s*=\s*new\s*(?:\([^;]*\))?') {
-            continue
-        }
-
-        $end = -1
-        for ($candidate = $index; $candidate -lt [Math]::Min($lines.Count, $index + 121); $candidate++) {
-            if ($lines[$candidate] -match '}\s*\)?;\s*$') {
-                $end = $candidate
-                break
-            }
-        }
-
-        if ($end -lt 0) {
-            [void]$violations.Add("${Path}:$($index + 1): ProcessStartInfo initializer could not be inspected")
-            continue
-        }
-
-        $initializer = $lines[$index..$end] -join "`n"
-        $hasUseShellExecuteFalse = $initializer -match '(?im)\bUseShellExecute\s*=\s*false\b'
-        $hasHiddenContainment = $initializer -match '(?im)\bCreateNoWindow\s*=\s*true\b|\bWindowStyle\s*=\s*(?:ProcessWindowStyle\.)?Hidden\b'
-        if (-not ($hasUseShellExecuteFalse -and $hasHiddenContainment)) {
-            [void]$violations.Add("${Path}:$($index + 1): ProcessStartInfo requires UseShellExecute = false and hidden containment")
-        }
+    $match = [regex]::Match($source, '(?<![A-Za-z0-9_])Process(?:StartInfo)?(?![A-Za-z0-9_])')
+    if ($match.Success) {
+        $lineNumber = ($source.Substring(0, $match.Index) -split "`n").Count
+        [void]$violations.Add("${Path}:$lineNumber`: C# source contains the forbidden process-launch token '$($match.Value)'; use the shared PowerShell containment helper instead.")
     }
 
     return $violations.ToArray()
@@ -190,7 +169,8 @@ if ($SelfTest) {
         $splatSafePath = Join-Path $selfTestRoot 'splat-safe.ps1'
         $splatNoNewWindowPath = Join-Path $selfTestRoot 'splat-nonewwindow-safe.ps1'
         $safePath = Join-Path $selfTestRoot 'safe.ps1'
-        $csharpVisiblePath = Join-Path $selfTestRoot 'visible.cs'
+        $csharpAliasPath = Join-Path $selfTestRoot 'alias.cs'
+        $csharpSplitPath = Join-Path $selfTestRoot 'split.cs'
         $csharpSafePath = Join-Path $selfTestRoot 'safe.cs'
         [IO.File]::WriteAllText($directPath, '& pwsh -NoProfile')
         [IO.File]::WriteAllText($processPath, "Start-Process 'example.exe'")
@@ -217,8 +197,9 @@ $parameters.NoNewWindow = $true
 Start-Process @parameters
 '@)
         [IO.File]::WriteAllText($safePath, "Invoke-NestedPwsh -ArgumentList @('-NoProfile')")
-        [IO.File]::WriteAllText($csharpVisiblePath, 'new ProcessStartInfo { UseShellExecute = false };')
-        [IO.File]::WriteAllText($csharpSafePath, 'new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = true };')
+        [IO.File]::WriteAllText($csharpAliasPath, 'using P = System.Diagnostics.ProcessStartInfo; P psi = new P();')
+        [IO.File]::WriteAllText($csharpSplitPath, "var psi = new`n    System.Diagnostics.ProcessStartInfo();")
+        [IO.File]::WriteAllText($csharpSafePath, 'using System.Diagnostics; var stopwatch = new Stopwatch();')
         if (@(Get-LaunchViolations $directPath).Count -eq 0) {
             throw 'The guard self-test did not reject a direct nested PowerShell launch.'
         }
@@ -240,11 +221,14 @@ Start-Process @parameters
         if (@(Get-LaunchViolations $safePath).Count -ne 0) {
             throw 'The guard self-test rejected a helper-mediated launch.'
         }
-        if (@(Get-CSharpLaunchViolations $csharpVisiblePath).Count -eq 0) {
-            throw 'The guard self-test did not reject an uncontained C# ProcessStartInfo initializer.'
+        if (@(Get-CSharpLaunchViolations $csharpAliasPath).Count -eq 0) {
+            throw 'The guard self-test did not reject an aliased C# ProcessStartInfo launch site.'
+        }
+        if (@(Get-CSharpLaunchViolations $csharpSplitPath).Count -eq 0) {
+            throw 'The guard self-test did not reject a split-line C# ProcessStartInfo launch site.'
         }
         if (@(Get-CSharpLaunchViolations $csharpSafePath).Count -ne 0) {
-            throw 'The guard self-test rejected a contained C# ProcessStartInfo initializer.'
+            throw 'The guard self-test rejected C# source without a process-launch token.'
         }
 
     }
@@ -269,9 +253,13 @@ $csharpFiles = Get-ChildItem -LiteralPath $repositoryRoot -Recurse -File -Filter
     Where-Object {
         $_.FullName -notmatch '[\\/]((\.git)|(bin)|(obj)|(artifacts)|_probe[\\/]corpus)([\\/]|$)'
     }
+$csharpFiles = @($csharpFiles)
+if ($csharpFiles.Count -eq 0) {
+    throw 'Nested PowerShell launch guard failed closed: the scanned C# source set is empty.'
+}
 $violations += @($csharpFiles | ForEach-Object { Get-CSharpLaunchViolations $_.FullName })
 if ($violations.Count -gt 0) {
-    throw "Visible child process launch sites must use the shared containment helper."
+    throw "Nested PowerShell launch guard failed closed: scanned source contains a prohibited launch form. $($violations -join ' ')"
 }
 
-Write-Output 'Nested PowerShell launch guard passed.'
+Write-Output "Nested PowerShell launch guard: PASS ($($scriptFiles.Count) PowerShell files and $($csharpFiles.Count) C# files scanned). PowerShell launch sites are limited to the shared hidden/no-new-window containment helper, and every scanned C# file contains no standalone Process or ProcessStartInfo token. This proves those closed source invariants only; it does not prove absence of generated, reflection-based, native, or source files outside the scanned set."
