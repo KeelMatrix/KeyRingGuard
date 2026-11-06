@@ -125,6 +125,11 @@ try {
     $symbolArchive.Dispose()
 }
 
+. (Join-Path $PSScriptRoot '../build/SourceLink.ps1')
+$sourceCommit = [string]$metadata.repository.commit
+$sourceResult = Assert-SourceLinkDocuments (Read-PackageSourceLink $symbolPackage) $repositoryRoot $sourceCommit
+Write-Output "SourceLink inspection: PASS ($($sourceResult.Tracked) tracked source mappings/checksums, $($sourceResult.Embedded) embedded generated sources; commit $sourceCommit)."
+
 $projectText = Get-Content -Raw -LiteralPath $project
 Write-Output 'Icon pack configuration:'
 $projectText -split "`r?`n" | Where-Object { $_ -match 'PackageIcon|icon[.]png' } | ForEach-Object { Write-Output $_.Trim() }

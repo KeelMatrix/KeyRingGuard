@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
+    [switch]$IdentityOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,8 +60,91 @@ function Invoke-Hygiene([string]$Fixture) {
     }
 }
 
+# Write objects directly: commit launchers can normalize ordinary commit identities.
+function Add-IdentityCommit(
+    [string]$Fixture, [string]$Author, [string]$AuthorEmail,
+    [string]$Committer, [string]$CommitterEmail,
+    [string]$Message = 'Maintain source', [string[]]$Parents = @(),
+    [string]$Ref = 'refs/heads/main'
+) {
+    $tree = (git -C $Fixture write-tree) -join ''
+    if ($LASTEXITCODE -ne 0) { throw 'Could not write fixture tree.' }
+    $lines = @("tree $tree")
+    $lines += @($Parents | ForEach-Object { "parent $_" })
+    $lines += @(
+        "author $Author <$AuthorEmail> 1700000000 +0000"
+        "committer $Committer <$CommitterEmail> 1700000000 +0000"
+        ''
+        $Message
+        ''
+    )
+    $objectPath = Join-Path $scratch 'commit-object.txt'
+    [IO.File]::WriteAllText($objectPath, ($lines -join "`n"), [Text.UTF8Encoding]::new($false))
+    $commit = (git -C $Fixture hash-object -t commit -w -- $objectPath) -join ''
+    if ($LASTEXITCODE -ne 0) { throw 'Could not write fixture commit.' }
+    git -C $Fixture update-ref $Ref $commit
+    if ($LASTEXITCODE -ne 0) { throw 'Could not update fixture ref.' }
+    $formats = @('%an', '%ae', '%cn', '%ce', '%B')
+    $values = @($Author, $AuthorEmail, $Committer, $CommitterEmail, $Message)
+    for ($index = 0; $index -lt $formats.Count; $index++) {
+        $stored = (git -C $Fixture show -s "--format=$($formats[$index])" $commit) -join "`n"
+        if ($LASTEXITCODE -ne 0 -or $stored.TrimEnd() -cne $values[$index].TrimEnd()) {
+            throw "Fixture commit did not retain $($formats[$index])."
+        }
+    }
+    return $commit
+}
+
+function Test-CommitIdentities {
+    $cases = @(
+        @{ Name = 'company'; Author = 'KeelMatrix'; Committer = 'KeelMatrix'; Email = 'keelmatrix@gmail.com'; Pass = $true }
+        @{ Name = 'web'; Author = 'KeelMatrix'; Committer = 'GitHub'; Email = 'noreply@github.com'; Pass = $true }
+        @{ Name = 'dependency'; Author = 'Dependabot'; Committer = 'Dependabot'; Email = 'dependabot@users.noreply.github.com'; Pass = $true }
+        @{ Name = 'dependency-web'; Author = 'Dependabot'; Committer = 'GitHub'; Email = 'noreply@github.com'; Pass = $true }
+        @{ Name = 'unknown-author'; Author = 'Other'; Committer = 'GitHub'; Email = 'noreply@github.com'; Pass = $false }
+        @{ Name = 'github-author'; Author = 'GitHub'; Committer = 'GitHub'; Email = 'noreply@github.com'; Pass = $false }
+        @{ Name = 'unknown-committer'; Author = 'KeelMatrix'; Committer = 'Other'; Email = 'noreply@github.com'; Pass = $false }
+        @{ Name = 'web-wrong-email'; Author = 'KeelMatrix'; Committer = 'GitHub'; Email = 'other@github.com'; Pass = $false }
+        @{ Name = 'web-wrong-domain'; Author = 'KeelMatrix'; Committer = 'GitHub'; Email = 'noreply@github.com.invalid'; Pass = $false }
+        @{ Name = 'web-wrong-name'; Author = 'KeelMatrix'; Committer = 'GitHub Web'; Email = 'noreply@github.com'; Pass = $false }
+        @{ Name = 'web-name-case'; Author = 'KeelMatrix'; Committer = 'github'; Email = 'noreply@github.com'; Pass = $false }
+        @{ Name = 'web-email-case'; Author = 'KeelMatrix'; Committer = 'GitHub'; Email = 'NOREPLY@github.com'; Pass = $false }
+        @{ Name = 'web-trailer'; Author = 'KeelMatrix'; Committer = 'GitHub'; Email = 'noreply@github.com'; Pass = $false; Message = "Maintain source`n`nReviewed-by: GitHub Actions" }
+    )
+    foreach ($case in $cases) {
+        $fixture = New-Fixture ('identity-' + $case.Name) 'Maintain source'
+        $message = if ($case.Message) { $case.Message } else { 'Maintain source' }
+        $null = Add-IdentityCommit $fixture $case.Author 'keelmatrix@gmail.com' $case.Committer $case.Email $message
+        $result = Invoke-Hygiene $fixture
+        if (($result.ExitCode -eq 0) -ne $case.Pass) {
+            throw "Stored identity case $($case.Name) returned $($result.ExitCode): $($result.Output)"
+        }
+    }
+
+    foreach ($badAncestor in @($false, $true)) {
+        $fixture = New-Fixture "identity-ancestor-$badAncestor" 'Maintain source'
+        $author = if ($badAncestor) { 'Other' } else { 'KeelMatrix' }
+        $ancestor = Add-IdentityCommit $fixture $author 'keelmatrix@gmail.com' 'GitHub' 'noreply@github.com'
+        $null = Add-IdentityCommit $fixture 'KeelMatrix' 'keelmatrix@gmail.com' 'KeelMatrix' 'keelmatrix@gmail.com' -Parents @($ancestor)
+        $result = Invoke-Hygiene $fixture
+        if (($result.ExitCode -eq 0) -eq $badAncestor) { throw "Non-HEAD identity case failed: $($result.Output)" }
+    }
+    foreach ($badMerge in @($false, $true)) {
+        $fixture = New-Fixture "identity-merge-$badMerge" 'Maintain source'
+        $base = (git -C $fixture rev-parse HEAD) -join ''
+        $side = Add-IdentityCommit $fixture 'KeelMatrix' 'keelmatrix@gmail.com' 'KeelMatrix' 'keelmatrix@gmail.com' -Message 'Side change' -Parents @($base) -Ref 'refs/heads/side'
+        $email = if ($badMerge) { 'other@github.com' } else { 'noreply@github.com' }
+        $null = Add-IdentityCommit $fixture 'KeelMatrix' 'keelmatrix@gmail.com' 'GitHub' $email -Message 'Merge source' -Parents @($base, $side)
+        $result = Invoke-Hygiene $fixture
+        if (($result.ExitCode -eq 0) -eq $badMerge) { throw "Merge identity case failed: $($result.Output)" }
+    }
+    Write-Output 'Stored commit identities: PASS (13 role/address/trailer cases, non-HEAD and merge positives/negatives).'
+}
+
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 try {
+    Test-CommitIdentities
+    if ($IdentityOnly) { exit 0 }
     $clean = New-Fixture 'clean' 'Keep history clean'
     git -C $clean tag --annotate --message 'Clean release tag' clean-release HEAD
     git -C $clean notes --ref=contract add --message 'Clean release note' HEAD
@@ -192,8 +276,7 @@ try {
             Add-MergeCommit $fixture $fixtureSpec.Message
         }
         if ($fixtureSpec.NonCompanyAuthor) {
-            Add-Commit $fixture $fixtureSpec.Message 'author-side' 'External Contributor'
-            Restore-Main $fixture
+            $null = Add-IdentityCommit $fixture 'External Contributor' 'person@example.org' 'KeelMatrix' 'keelmatrix@gmail.com' -Message $fixtureSpec.Message -Ref 'refs/heads/author-side'
         }
         if ($fixtureSpec.AnnotatedTag) {
             git -C $fixture tag --annotate --message $fixtureSpec.Message annotated-fixture HEAD

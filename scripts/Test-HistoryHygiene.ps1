@@ -201,10 +201,13 @@ foreach ($commit in $commits) {
     $author = (git -C $root show -s --format='%an' $commit) -join ''
     $committer = (git -C $root show -s --format='%cn' $commit) -join ''
     if ($LASTEXITCODE -ne 0) { throw "Could not inspect commit $commit (refs: $refDescription)." }
-    if ($author -and $author -notin @('KeelMatrix', 'Dependabot')) {
+    if ($author -notin @('KeelMatrix', 'Dependabot')) {
         throw "Commit $commit (refs: $refDescription) has a non-company author '$author'."
     }
-    if ($committer -and $committer -notin @('KeelMatrix', 'Dependabot')) {
+    $committerEmail = (git -C $root show -s --format='%ce' $commit) -join ''
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect committer email for $commit (refs: $refDescription)." }
+    $isGitHubWebCommitter = $committer -ceq 'GitHub' -and $committerEmail -ceq 'noreply@github.com'
+    if ($committer -notin @('KeelMatrix', 'Dependabot') -and -not $isGitHubWebCommitter) {
         throw "Commit $commit (refs: $refDescription) has a non-company committer '$committer'."
     }
 

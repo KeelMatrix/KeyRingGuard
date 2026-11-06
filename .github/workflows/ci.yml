@@ -118,3 +118,7 @@ jobs:
       - name: Package consumer smoke
         shell: pwsh
         run: pwsh -NoProfile -File scripts/Invoke-PackageConsumerSmoke.ps1
+
+      - name: Verify SourceLink contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/VerifySourceLinkContract.ps1

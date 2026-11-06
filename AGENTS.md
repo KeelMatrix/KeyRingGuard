@@ -38,6 +38,10 @@ pwsh ./scripts/Invoke-LocalGate.ps1
 
 Use the smallest affected test project first. Before handoff, run the local validation path once, inspect the `.nupkg` and `.snupkg`, and run the package consumer from an isolated local feed. Public CI additionally proves the claimed Windows/Linux/macOS matrix; package inspection must not be skipped when the founder-owned icon is absent.
 
+The deterministic source-path settings in `Directory.Build.props` use the SDK's repository-root mapping. Package inspection checks every non-embedded PDB source URL and checksum against the recorded Git tree, separately verifies embedded generated sources, and rejects private document paths. `tests/VerifySourceLinkContract.ps1` exercises these artifact checks and their negative controls.
+
+`scripts/Test-HistoryHygiene.ps1` defines the history identity contract: responsible authors retain the company/Dependabot allowlist; the technical committer may also be exactly `GitHub <noreply@github.com>`. Attribution and all reachable-history checks still apply to web commits and merges. `tests/VerifyHistoryHygieneContract.ps1 -IdentityOnly` runs the focused stored-object identity matrix.
+
 ## Scope boundaries
 
 Keep changes within the verifier, its tests, packaging, and the documentation needed to describe shipped behavior. Do not add provider SDKs, a CLI, hosted services, key-management operations, authentication-cookie parsing, or unrelated repository automation.

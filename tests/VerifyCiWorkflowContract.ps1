@@ -26,6 +26,7 @@ $requiredFragments = @(
     'scripts/Invoke-VulnerabilityAudit.ps1'
     'scripts/Inspect-Package.ps1 -Version 0.1.0 -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.0.1.0.nupkg -AllowMissingIcon'
     'scripts/Invoke-PackageConsumerSmoke.ps1'
+    'tests/VerifySourceLinkContract.ps1'
     'scripts/GetReleaseVersion.ps1 -Tag "$RELEASE_TAG" -OutputPath "$RUNNER_TEMP/release-version.txt"'
     'scripts/Test-ReleaseArtifactSet.ps1 -Version 0.1.0 -PackageDirectory ./artifacts/packages'
     'scripts/Publish-ReleaseArtifacts.ps1 -Version 0.1.0 -PackageDirectory ./artifacts/packages -DryRun'
