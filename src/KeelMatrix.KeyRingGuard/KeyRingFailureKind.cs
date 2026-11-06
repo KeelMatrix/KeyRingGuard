@@ -16,7 +16,7 @@ public enum KeyRingFailureKind
     InvalidScenario,
 
     /// <summary>
-    /// A provider could not be constructed.
+    /// A provider could not be constructed, or the previous restart provider could not be retired.
     /// </summary>
     ProviderCreation,
 
@@ -36,7 +36,8 @@ public enum KeyRingFailureKind
     UnexpectedCrossUnprotect,
 
     /// <summary>
-    /// The configured provider or key-manager operation exceeded its bound.
+    /// The verifier selected its configured operation, admission, or restart-retirement deadline.
+    /// Independent callback cancellation is reported as an operation-specific failure.
     /// </summary>
     Timeout,
 

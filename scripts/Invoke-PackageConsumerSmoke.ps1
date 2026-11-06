@@ -80,6 +80,8 @@ try {
     New-Item -ItemType Directory -Path $lifecycle | Out-Null
     Copy-Item -LiteralPath (Join-Path $root 'tests' 'PackageLifecycleProbe.cs') -Destination (Join-Path $lifecycle 'Program.cs')
     Copy-Item -LiteralPath (Join-Path $root 'tests' 'CancellationLifetimeProbe.cs') -Destination (Join-Path $lifecycle 'CancellationLifetimeProbe.cs')
+    Copy-Item -LiteralPath (Join-Path $root 'tests' 'BufferBoundaryProbe.cs') -Destination $lifecycle
+    Copy-Item -LiteralPath (Join-Path $root 'tests' 'RestartBoundaryProbe.cs') -Destination $lifecycle
     $lifecycleProject = Join-Path $lifecycle 'Lifecycle.csproj'
     Set-Content -LiteralPath $lifecycleProject -Value @'
 <Project Sdk="Microsoft.NET.Sdk">

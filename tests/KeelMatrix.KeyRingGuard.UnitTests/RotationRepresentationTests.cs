@@ -24,6 +24,8 @@ public sealed class RotationRepresentationTests
         {
             "12353412-5656-4a4a-8abc-0123456789ab", // Only the inner pair of the first field differs.
             "12345678-1234-4567-8abc-0123456789ab",
+            "12345678-1234-4546-8abc-0123456789ab",
+            "78563412-3412-4645-8abc-0123456789ab",
             "00000000-0000-0000-0000-000000000000",
             "ffffffff-ffff-ffff-ffff-ffffffffffff",
         })
@@ -35,8 +37,37 @@ public sealed class RotationRepresentationTests
     }
 
     [Theory]
+    [InlineData(false, "old")]
+    [InlineData(false, "new")]
+    [InlineData(true, "old")]
+    [InlineData(true, "new")]
+    public async Task RotationNeverLetsProtectRewriteEitherExpectedCanary(bool asynchronous, string phase)
+    {
+        var id = Guid.Parse("12345678-1234-4546-8abc-0123456789ab");
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity,
+            CreateFactory(id, asynchronous, payload => Envelope(payload, id), mutation: phase));
+        Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DistinctSwappedStaleIdsFailAdoptionInEitherRole(bool asynchronous, bool reverse)
+    {
+        var expected = Guid.Parse(reverse ? "78563412-3412-4645-8abc-0123456789ab" : "12345678-1234-4546-8abc-0123456789ab");
+        var stale = new Guid(expected.ToByteArray(bigEndian: true));
+        Assert.NotEqual(expected, stale);
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity,
+            CreateFactory(expected, asynchronous, payload => Envelope(payload, stale), oldId: stale));
+        Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
+        Assert.Contains("did not adopt", result.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [MemberData(nameof(Representations))]
-    public async Task RotationAcceptsCanonicalIdsAndRejectsOnlyDistinguishableAlternateIds(
+    public async Task RotationInterpretsEveryStructurallyValidIdCanonically(
         string id, bool asynchronous, bool bigEndian)
     {
         var keyId = Guid.Parse(id);
@@ -46,7 +77,7 @@ public sealed class RotationRepresentationTests
 
         var canonical = !bigEndian || keyId.ToByteArray().SequenceEqual(keyId.ToByteArray(bigEndian: true));
         Assert.Equal(canonical, result.Succeeded);
-        Assert.Equal(canonical ? KeyRingFailureKind.None : KeyRingFailureKind.RotationUnavailable, result.FailureKind);
+        Assert.Equal(canonical ? KeyRingFailureKind.None : KeyRingFailureKind.RotationFailure, result.FailureKind);
     }
 
     public static IEnumerable<object[]> InvalidEnvelopes()
@@ -127,12 +158,16 @@ public sealed class RotationRepresentationTests
         Assert.Equal(KeyRingFailureKind.Unprotect, result.FailureKind);
     }
 
-    private static KeyRingProviderFactory CreateFactory(Guid keyId, bool asynchronous, Func<byte[], byte[]> protect, int brokenRead = 0)
+    private static KeyRingProviderFactory CreateFactory(Guid keyId, bool asynchronous, Func<byte[], byte[]> protect, int brokenRead = 0, string mutation = "", Guid? oldId = null)
     {
-        var manager = new KnownIdManager(keyId);
+        var manager = new KnownIdManager(keyId, oldId);
         var reads = 0;
         IDataProtectionProvider Provider() => new FakeProvider(
-            protect: payload => manager.CreatedKey is null ? Envelope(payload, OldKeyId) : protect(payload),
+            protect: payload =>
+            {
+                if ((mutation == "old" && manager.CreatedKey is null) || (mutation == "new" && manager.CreatedKey is not null)) { payload[0] ^= 1; }
+                return manager.CreatedKey is null ? Envelope(payload, oldId ?? OldKeyId) : protect(payload);
+            },
             unprotect: payload => ++reads == brokenRead ? [] : payload[20..]);
 
         return asynchronous
@@ -164,9 +199,9 @@ public sealed class RotationRepresentationTests
         return envelope;
     }
 
-    private sealed class KnownIdManager(Guid keyId) : IKeyManager
+    private sealed class KnownIdManager(Guid keyId, Guid? oldId) : IKeyManager
     {
-        private readonly IKey _oldKey = new TestKey(OldKeyId, DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(2));
+        private readonly IKey _oldKey = new TestKey(oldId ?? OldKeyId, DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(2));
         public IKey? CreatedKey { get; private set; }
         public IKey CreateNewKey(DateTimeOffset activationDate, DateTimeOffset expirationDate) =>
             CreatedKey = new TestKey(keyId, activationDate, expirationDate);

@@ -11,7 +11,11 @@ namespace KeelMatrix.KeyRingGuard;
 /// ASP.NET Core persisted-protector contract; arbitrary provider exceptions fail closed.
 /// </summary>
 /// <remarks>
-/// This is the authoritative timeout, cleanup, and provider-ownership contract for the shipping API.
+/// This is the authoritative timeout, buffer, error-attribution, cleanup, and ownership contract for the shipping API.
+/// Expected canaries and retained ciphertext are private snapshots. Each protection/unprotection callback
+/// receives a working copy, and returned bytes are copied inside the callback boundary before later calls.
+/// Callbacks may consume their input or reuse output storage on subsequent calls. Concurrent mutation
+/// outside a callback's declared lifetime remains consumer-owned and is unsupported.
 /// A shared limit admits at most 32 verification lifecycles. Admission waits at most the primary
 /// factory's timeout and honors caller cancellation. Each lifecycle retains its reservation until
 /// all active operations, cancellation notifications, and provider cleanup finish, even after the caller stops waiting.
@@ -23,12 +27,21 @@ namespace KeelMatrix.KeyRingGuard;
 /// terminating lifecycle, bounded by the 32 lifecycle reservations; it uses no dedicated notification thread.
 /// Successful operations seal their cancellation lifetime before the next scenario stage. A stop that wins
 /// that decision ends the scenario; caller cancellation takes priority when observed at the decision.
+/// Only that sealed stop cause selects Timeout or Canceled. An independently canceled callback or task
+/// receives its operation-specific failure category, without exposing exception text or token details.
 /// Arbitrary running user code cannot be interrupted. Providers returned by factories belong to verification.
 /// Each distinct disposable provider is cleaned up once, after operations and owned notifications finish.
-/// Cleanup runs as one bounded batch per lifecycle, including late factory results, and is best effort:
+/// Restart continuity completes A's operation/notification quiescence and retirement before creating B.
+/// One primary-factory timeout bounds that transition, including quiescence, scheduler admission, and Dispose.
+/// A retirement exception returns ProviderCreation; a stopped retirement returns Timeout or Canceled.
+/// None of these outcomes admits B. A transferred retirement attempt continues uncanceled and is never repeated.
+/// For non-IDisposable providers, retirement ends verifier use; it cannot force GC or destroy caller-held objects.
+/// Return an owning IDisposable adapter when releasing an external scope is necessary before reopening.
+/// Replica and isolation providers retain their intentionally simultaneous lifetimes.
+/// Final cleanup runs as one bounded batch per lifecycle, including late factory results, and is best effort:
 /// exceptions are suppressed, and a blocked provider delays later providers in its batch until it returns.
 /// When no operation or notification remains active, the caller waits at most the primary factory's timeout for cleanup.
-/// Cleanup timeout or exceptions preserve the scenario verdict; caller cancellation during that wait
+/// Final-cleanup timeout or exceptions preserve the scenario verdict; caller cancellation during that wait
 /// produces <see cref="KeyRingFailureKind.Canceled"/>. An already timed-out/canceled active operation or notification
 /// adds no cleanup wait. Cleanup continues without cancellation and retains its reservation until finished.
 /// Thus permanently blocked user code can exhaust capacity, but repeated calls cannot accumulate owned
@@ -40,8 +53,8 @@ namespace KeelMatrix.KeyRingGuard;
 /// Callback re-entry on flowed execution context, including cancellation handlers and cleanup, is rejected before admission.
 /// Deliberately severed execution-context flow remains unsupported.
 /// Rotation requires the standard header, a canonical little-endian key ID, and a non-empty body.
-/// Canonical key-ID bytes remain supported when both byte orders produce identical bytes.
-/// A distinguishable alternate byte order is unsupported; a canonical wrong or stale ID fails adoption.
+/// Every structurally valid envelope is interpreted canonically: any wrong or stale ID fails adoption,
+/// including bytes equal to a distinct key's alternate representation. Malformed envelopes are unsupported.
 /// </remarks>
 public static class KeyRingVerifier
 {
@@ -224,6 +237,28 @@ public static class KeyRingVerifier
         if (protectedResult.Failure is not null)
         {
             return protectedResult.Failure;
+        }
+
+        // Capture prior operation owners before retirement acquires its own lease.
+        // Waiting on the scope's active count here would include that lease and deadlock.
+        var quiescence = providerScope.CaptureQuiescence();
+        var retirement = await ExecuteOwnedAsync(async _ =>
+        {
+            await quiescence.ConfigureAwait(false);
+            return await providerScope.RetireAsync(first.Provider!).ConfigureAwait(false);
+        }, providerFactory.Timeout, providerScope, cancellationToken).ConfigureAwait(false);
+        protectorResult = default;
+        if (retirement.Canceled)
+        {
+            return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
+        }
+        if (retirement.TimedOut)
+        {
+            return Failure(scenario, KeyRingFailureKind.Timeout, "Restart provider retirement timed out before the configured bound.");
+        }
+        if (retirement.Exception is not null)
+        {
+            return Failure(scenario, KeyRingFailureKind.ProviderCreation, "Restart failed: the previous provider could not be retired before recreation.");
         }
 
         var second = await CreateProviderAsync(scenario, providerFactory, providerScope, cancellationToken).ConfigureAwait(false);
@@ -957,11 +992,9 @@ public static class KeyRingVerifier
             return RotationPayloadFormat.StandardWithExpectedKey;
         }
 
-        Span<byte> bigEndianKey = stackalloc byte[16];
-        keyId.TryWriteBytes(bigEndianKey, bigEndian: true, out _);
-        return payloadKey.SequenceEqual(bigEndianKey)
-            ? RotationPayloadFormat.Unsupported
-            : RotationPayloadFormat.StandardButDifferentKey;
+        // Every complete envelope names a canonical ID. Alternate-byte equality
+        // can also name a distinct stale key and cannot establish producer intent.
+        return RotationPayloadFormat.StandardButDifferentKey;
     }
 
     private enum RotationPayloadFormat
@@ -1011,7 +1044,7 @@ public static class KeyRingVerifier
         CancellationToken cancellationToken)
     {
         var operation = await ExecuteBoundedAsync(
-            () => protector.Protect(canary),
+            () => protector.Protect(canary.ToArray())?.ToArray(),
             timeout,
             providerScope,
             cancellationToken).ConfigureAwait(false);
@@ -1086,7 +1119,7 @@ public static class KeyRingVerifier
         }
 
         var operation = await ExecuteBoundedAsync(
-            () => protectorResult.Value!.Unprotect(protectedPayload),
+            () => protectorResult.Value!.Unprotect(protectedPayload.ToArray())?.ToArray(),
             timeout,
             providerScope,
             cancellationToken).ConfigureAwait(false);
@@ -1132,7 +1165,7 @@ public static class KeyRingVerifier
         }
 
         var operation = await ExecuteBoundedAsync(
-            () => protectorResult.Value!.Unprotect(protectedPayload),
+            () => protectorResult.Value!.Unprotect(protectedPayload.ToArray())?.ToArray(),
             timeout,
             providerScope,
             cancellationToken).ConfigureAwait(false);
@@ -1188,11 +1221,10 @@ public static class KeyRingVerifier
             // caller-token wait could run this continuation inline inside caller.Cancel.
             await Task.WhenAny(task, lifetime.Stopped).ConfigureAwait(false);
 
-            var stopped = lifetime.Seal();
-            if (stopped)
+            var stop = lifetime.Seal();
+            if (stop != StopCause.None)
             {
-                var canceled = cancellationToken.IsCancellationRequested;
-                return new(default, null, !canceled, canceled);
+                return new(default, null, stop == StopCause.Deadline, stop == StopCause.Caller);
             }
 
             try
@@ -1275,15 +1307,17 @@ public static class KeyRingVerifier
             }
         }
 
-        internal bool Seal()
+        internal StopCause Seal()
         {
             lock (_gate)
             {
                 // Completion can win before the caller relay runs. Signal before selecting
                 // a stop result, while the observer still owns the live source.
-                if (_caller.IsCancellationRequested) { RequestStop(); }
+                var canceled = _caller.IsCancellationRequested;
+                if (canceled) { RequestStop(); }
                 _sealed = true;
-                return _notification is not null;
+                return _notification is null ? StopCause.None
+                    : canceled ? StopCause.Caller : StopCause.Deadline;
             }
         }
 
@@ -1322,6 +1356,8 @@ public static class KeyRingVerifier
 
     private readonly record struct BoundedOperation<T>(T? Value, Exception? Exception, bool TimedOut, bool Canceled);
 
+    private enum StopCause { None, Deadline, Caller }
+
     private static async Task<(IDataProtectionProvider? Provider, KeyRingVerificationResult? Failure)> CreateProviderAsync(
         KeyRingScenario scenario,
         KeyRingProviderFactory factory,
@@ -1335,7 +1371,7 @@ public static class KeyRingVerifier
         {
             return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
         }
-        if (operation.TimedOut || operation.Exception is OperationCanceledException)
+        if (operation.TimedOut)
         {
             return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Provider creation timed out before the configured bound."));
         }
@@ -1359,7 +1395,7 @@ public static class KeyRingVerifier
         {
             return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
         }
-        if (operation.TimedOut || operation.Exception is OperationCanceledException)
+        if (operation.TimedOut)
         {
             return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Key-manager creation timed out before the configured bound."));
         }
@@ -1385,6 +1421,8 @@ public static class KeyRingVerifier
         private static readonly SemaphoreSlim Lifecycles = new(32, 32);
         private readonly object _gate = new();
         private readonly HashSet<IDisposable> _providers = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<IDataProtectionProvider, Task<bool>> _retirements = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<OperationLease> _operations = [];
         private readonly TaskCompletionSource _cleanupCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _activeOperations;
         private bool _disposed;
@@ -1433,9 +1471,35 @@ public static class KeyRingVerifier
             lock (_gate)
             {
                 _activeOperations++;
+                var lease = new OperationLease(this);
+                _operations.Add(lease);
+                return lease;
             }
+        }
 
-            return new OperationLease(this);
+        internal Task CaptureQuiescence()
+        {
+            lock (_gate) { return Task.WhenAll(_operations.Select(operation => operation.Completion)); }
+        }
+
+        internal Task<bool> RetireAsync(IDataProtectionProvider provider)
+        {
+            lock (_gate)
+            {
+                if (_retirements.TryGetValue(provider, out var existing)) { return existing; }
+                if (provider is not IDisposable disposable)
+                {
+                    return _retirements[provider] = Task.FromResult(true);
+                }
+
+                _providers.Remove(disposable);
+                // Once transferred, teardown cannot be canceled or retried by final cleanup.
+                return _retirements[provider] = KeyRingOperationScheduler.Run(() =>
+                {
+                    disposable.Dispose();
+                    return true;
+                }, CancellationToken.None);
+            }
         }
 
         internal void Add(IDataProtectionProvider provider)
@@ -1449,7 +1513,7 @@ public static class KeyRingVerifier
             {
                 // Add is always called under an active operation lease, including
                 // a factory that returns after the caller has stopped waiting.
-                _providers.Add(disposable);
+                if (!_retirements.ContainsKey(provider)) { _providers.Add(disposable); }
             }
         }
 
@@ -1473,12 +1537,13 @@ public static class KeyRingVerifier
             StartCleanup(providers);
         }
 
-        private void ExitOperation()
+        private void ExitOperation(OperationLease operation)
         {
             IDisposable[]? providers = null;
             lock (_gate)
             {
                 _activeOperations--;
+                _operations.Remove(operation);
                 if (_disposed && _activeOperations == 0)
                 {
                     providers = TakeProviders();
@@ -1547,10 +1612,19 @@ public static class KeyRingVerifier
         private sealed class OperationLease : IDisposable
         {
             private ProviderScope? _owner;
+            private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            internal Task Completion => _completion.Task;
 
             internal OperationLease(ProviderScope owner) => _owner = owner;
 
-            public void Dispose() => Interlocked.Exchange(ref _owner, null)?.ExitOperation();
+            public void Dispose()
+            {
+                var owner = Interlocked.Exchange(ref _owner, null);
+                if (owner is null) { return; }
+                owner.ExitOperation(this);
+                _completion.TrySetResult();
+            }
         }
     }
 

@@ -27,6 +27,9 @@ jobs:
         with:
           dotnet-version: 10.0.401
 
+      - name: Verify SDK selection
+        run: pwsh -NoProfile -File scripts/Test-SdkSelection.ps1
+
       - name: Derive and validate release tag
         id: release-version
         env:
@@ -87,6 +90,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.401
+
+      - name: Verify SDK selection
+        run: pwsh -NoProfile -File scripts/Test-SdkSelection.ps1
 
       - name: Download validated release artifacts
         uses: actions/download-artifact@v4

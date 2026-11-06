@@ -36,6 +36,9 @@ jobs:
         with:
           dotnet-version: 10.0.401
 
+      - name: Verify SDK selection
+        run: pwsh -NoProfile -File scripts/Test-SdkSelection.ps1
+
       - name: Verify hidden child PowerShell launch guard
         shell: pwsh
         run: ./build/Test-NestedPwshLaunch.ps1 -SelfTest
@@ -54,7 +57,22 @@ jobs:
         shell: pwsh
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
-        run: pwsh -NoProfile -File scripts/Test-ChangelogContract.ps1 -Tag v0.1.0 -ExpectedCommit $env:EXPECTED_COMMIT
+        run: pwsh -NoProfile -File scripts/Test-ChangelogContract.ps1 -Tag v0.1.0 -ExpectedCommit $env:EXPECTED_COMMIT -Readiness
+
+      - name: Verify changelog fixtures
+        run: pwsh -NoProfile -File tests/VerifyChangelogContract.ps1
+
+      - name: Verify IDE ignore behavior and negative controls
+        run: pwsh -NoProfile -File tests/VerifyIdeIgnoreContract.ps1
+
+      - name: Verify gate failure propagation
+        run: pwsh -NoProfile -File tests/VerifyGateOrchestration.ps1
+
+      - name: Verify isolated SDK provisioning
+        run: pwsh -NoProfile -File tests/VerifySdkIsolation.ps1
+
+      - name: Verify loopback publication contract
+        run: pwsh -NoProfile -File tests/VerifyPublicationContract.ps1
 
       - name: Verify release workflow contract
         shell: pwsh

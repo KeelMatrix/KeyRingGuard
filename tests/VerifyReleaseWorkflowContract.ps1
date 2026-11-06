@@ -14,6 +14,29 @@ $literalDot = $regexEscape + '.'
 $endOfString = $regexEscape + 'z'
 if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { throw "Release workflow is missing: $WorkflowPath" }
 $text = Get-Content -Raw -LiteralPath $WorkflowPath
+. (Join-Path $PSScriptRoot '../build/Assert-WorkflowSdk.ps1')
+$sdkVersion = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..' 'global.json') | ConvertFrom-Json).sdk.version
+Assert-WorkflowSdk $text $sdkVersion
+if ($text -match '(?m)^.*Test-ChangelogContract.ps1.*-Readiness') { throw 'The tag workflow cannot use draft readiness validation.' }
+$normalized = $text.Replace("`r`n", "`n")
+$sdkStep = "      - name: Set up .NET SDK`n        uses: actions/setup-dotnet@v4`n        with:`n          dotnet-version: $sdkVersion`n"
+foreach ($jobName in @('validate-release', 'publish')) {
+    $start = $normalized.IndexOf("  ${jobName}:", [StringComparison]::Ordinal)
+    $position = $normalized.IndexOf($sdkStep, $start, [StringComparison]::Ordinal)
+    if ($position -lt 0) { throw 'SDK mutation cannot locate job-local setup.' }
+    foreach ($replacement in @('', $sdkStep.Replace($sdkVersion, '0.0.0'), ($sdkStep + "        if: false`n"))) {
+        $mutant = $normalized.Remove($position, $sdkStep.Length).Insert($position, $replacement)
+        $rejected = $false
+        try { Assert-WorkflowSdk $mutant $sdkVersion } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Missing, wrong-version, or conditional SDK setup passed.' }
+    }
+    $selectionEnd = $normalized.IndexOf('      - name:', $position + $sdkStep.Length + 1, [StringComparison]::Ordinal)
+    $late = $normalized.Remove($position, $sdkStep.Length)
+    $late += "`n" + $sdkStep
+    $rejected = $false
+    try { Assert-WorkflowSdk $late $sdkVersion } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Late or wrong-job SDK setup passed.' }
+}
 
 function Assert-Contains([string]$Value, [string]$Pattern, [string]$Message) {
     if ($Value -notmatch $Pattern) { throw "Release workflow contract failed: $Message" }
@@ -66,7 +89,7 @@ if (-not (Test-Path -LiteralPath $PublisherPath -PathType Leaf)) {
 }
 $publishScript = Get-Content -Raw -LiteralPath $PublisherPath
 function Assert-PublisherContract([string]$ScriptText) {
-    if ($ScriptText -notmatch '(?m)dotnet\s+nuget\s+push\s+\$packagePath\s+--source\s+https://api\.nuget\.org/v3/index\.json\s+--api-key\s+\$ApiKey') {
+    if ($ScriptText -notmatch "'nuget', 'push', " + [regex]::Escape('$packagePaths[$index]') -or $ScriptText -notmatch '--no-symbols' -or $ScriptText -notmatch 'Invoke-BoundedDotnet -Arguments') {
         throw 'Release workflow contract failed: the committed publish script does not push the validated package paths.'
     }
     if ($ScriptText -notmatch '(?s)\$expected\s*=\s*@\(\s*"KeelMatrix\.KeyRingGuard\.\$Version\.nupkg"\s*"KeelMatrix\.KeyRingGuard\.\$Version\.snupkg"') {
@@ -75,7 +98,7 @@ function Assert-PublisherContract([string]$ScriptText) {
     if ($ScriptText -notmatch '(?m)Compare-Object\s+\(\$expected\s*\|\s*Sort-Object\)\s+\(\$actual\s*\|\s*Sort-Object\)') {
         throw 'Release workflow contract failed: the publisher must fail closed on missing or unexpected artifacts.'
     }
-    if ($ScriptText -notmatch '(?m)\$LASTEXITCODE\s+-ne\s+0') {
+    if ($ScriptText -notmatch 'failed-acceptance-uncertain' -or $ScriptText -notmatch '(?m)^\s*exit 1\s*$') {
         throw 'Release workflow contract failed: the publisher must propagate a nonzero NuGet push exit code.'
     }
 }
@@ -86,8 +109,8 @@ New-Item -ItemType Directory -Path $publisherMutationRoot -Force | Out-Null
 try {
     $mutatedPublisherPath = Join-Path $publisherMutationRoot 'Publish-ReleaseArtifacts.ps1'
     $mutatedPublisher = $publishScript.Replace(
-        'dotnet nuget push $packagePath',
-        'dotnet nuget push (Join-Path $PackageDirectory "unrelated-package.nupkg")')
+        '$packagePaths[$index]',
+        '(Join-Path $PackageDirectory "unrelated-package.nupkg")')
     if ($mutatedPublisher -ceq $publishScript) {
         throw 'Release workflow contract failed: the publisher mutation fixture was not applied.'
     }

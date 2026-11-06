@@ -3,7 +3,9 @@ param(
     [string]$Version = $env:RELEASE_VERSION,
     [string]$PackageDirectory = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'artifacts' 'packages')),
     [string]$ApiKey = $env:NUGET_API_KEY,
-    [switch]$DryRun
+    [switch]$DryRun,
+    # Test seam: the endpoint is constructed from loopback and accepts only a synthetic credential.
+    [ValidateRange(0, 65535)][int]$FixturePort = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,19 +30,44 @@ foreach ($packagePath in $packagePaths) {
     }
 }
 
-$pushCommandSuffix = '--source https://api.nuget.org/v3/index.json --api-key <temporary credential>'
+$source = 'https://api.nuget.org/v3/index.json'
+$config = Join-Path $PSScriptRoot '..' 'NuGet.config'
+$extra = @()
+$timeoutSeconds = 90
+if ($FixturePort -ne 0) {
+    if ($ApiKey -cne 'local-fixture-only') { throw 'The loopback fixture requires its synthetic credential.' }
+    $source = "http://127.0.0.1:$FixturePort/index.json"
+    # The configuration is outside the validated artifact directory.
+    $config = Join-Path (Split-Path -Parent $PackageDirectory) 'fixture.config'
+    if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw 'The isolated fixture configuration is missing.' }
+    $extra = @('--allow-insecure-connections')
+    $timeoutSeconds = 2
+}
+$pushCommandSuffix = "--source $source --api-key <temporary credential>"
 if ($DryRun) {
-    foreach ($packagePath in $packagePaths) {
-        Write-Output "Dry run: dotnet nuget push $packagePath $pushCommandSuffix"
-    }
+    Write-Output "Dry run: dotnet nuget push $($packagePaths[0]) --no-symbols $pushCommandSuffix"
+    Write-Output "Dry run: dotnet nuget push $($packagePaths[1]) $pushCommandSuffix"
     exit 0
 }
 
 if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw 'The temporary NuGet credential is missing from NUGET_API_KEY.' }
 
-foreach ($packagePath in $packagePaths) {
-    & dotnet nuget push $packagePath --source https://api.nuget.org/v3/index.json --api-key $ApiKey
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+. (Join-Path $PSScriptRoot 'Invoke-BoundedDotnet.ps1')
+$states = @('not-attempted', 'not-attempted')
+for ($index = 0; $index -lt $packagePaths.Count; $index++) {
+    $arguments = @('nuget', 'push', $packagePaths[$index], '--source', $source, '--api-key', $ApiKey, '--symbol-api-key', $ApiKey,
+        '--configfile', $config, '--timeout', [string]$timeoutSeconds, '--force-english-output') + $extra
+    if ($index -eq 0) { $arguments += '--no-symbols' }
+    try {
+        Invoke-BoundedDotnet -Arguments $arguments -TimeoutMilliseconds (($timeoutSeconds + 2) * 1000) -IsolatedCredentials:($FixturePort -ne 0)
+        $states[$index] = 'submission-confirmed'
+    }
+    catch {
+        $states[$index] = 'failed-acceptance-uncertain'
+        Write-Output "Submission state: primary=$($states[0]); symbols=$($states[1]). No rollback or indexing is implied."
+        # A failed/lost response can follow server acceptance. Never replay either stage.
+        exit 1
+    }
 }
 
-Write-Output "Published release artifacts for version $Version."
+Write-Output "Submission state: primary=$($states[0]); symbols=$($states[1]). Indexing and availability are not verified."

@@ -16,4 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\KeelMatrix.KeyRingGuard\KeelMatrix.KeyRingGuard.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\BufferBoundaryProbe.cs" Link="BufferBoundaryProbe.cs" />
+    <Compile Include="..\RestartBoundaryProbe.cs" Link="RestartBoundaryProbe.cs" />
+  </ItemGroup>
 </Project>

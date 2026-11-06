@@ -27,7 +27,7 @@ public sealed class KeyRingScenario
     }
 
     /// <summary>
-    /// Verifies a payload across independently recreated providers using one factory.
+    /// Verifies a payload after retiring the first provider and independently recreating a provider using one factory.
     /// </summary>
     public static KeyRingScenario RestartContinuity { get; } = new(
         "Restart continuity",
@@ -35,7 +35,7 @@ public sealed class KeyRingScenario
         ContinuityExpectation.PreserveProtectedPayload);
 
     /// <summary>
-    /// Verifies payload exchange in both directions between two independently created providers.
+    /// Verifies payload exchange in both directions between two independently created, simultaneously owned providers.
     /// </summary>
     public static KeyRingScenario ReplicaSharing { get; } = new(
         "Replica sharing",

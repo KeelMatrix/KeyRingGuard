@@ -15,7 +15,10 @@ namespace KeelMatrix.KeyRingGuard;
 /// registrations. Notification dispatch uses no primary callback slot; at most one unfinished dispatch per
 /// terminating lifecycle is retained until it completes. A signal does not promise completed registrations.
 /// Provider, key-manager, rotation, and cleanup callbacks share a bounded scheduler with 32 callback slots.
-/// Cleanup is best effort and observed for at most the primary factory's timeout, without changing a
+/// Restart completes the first provider's quiescence and retirement before recreation. Failed or stopped
+/// retirement prevents recreation. Non-disposable providers cannot be forcibly destroyed; return an owning
+/// IDisposable adapter when a resource must be released before reopening. Final cleanup is best effort
+/// and observed for at most the primary factory's timeout, without changing a
 /// scenario verdict on cleanup timeout or exception. Caller cancellation during cleanup returns Canceled.
 /// A verification started on a callback's own execution flow is rejected before scheduler admission with
 /// <see cref="KeyRingFailureKind.InvalidScenario"/>. This attribution follows the flowed execution context;
@@ -241,7 +244,7 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Gets the per-operation timeout applied by the verifier.
-    /// When this is the primary factory, also bounds lifecycle admission and cleanup observation.
+    /// When this is the primary factory, also bounds lifecycle admission, restart retirement, and final-cleanup observation.
     /// </summary>
     public TimeSpan Timeout { get; }
 

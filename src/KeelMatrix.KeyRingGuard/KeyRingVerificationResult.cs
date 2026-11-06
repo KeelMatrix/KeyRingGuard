@@ -40,7 +40,7 @@ public sealed class KeyRingVerificationResult
     public string Message { get; }
 
     /// <summary>
-    /// Gets the elapsed time through result observation, including lifecycle admission and cleanup
+    /// Gets the elapsed time through result observation, including lifecycle admission, restart retirement, and cleanup
     /// actually awaited. Excludes callbacks and cleanup that continue after the caller stops waiting.
     /// See the <see cref="KeyRingVerifier"/> class remarks for the ownership and waiting contract.
     /// </summary>

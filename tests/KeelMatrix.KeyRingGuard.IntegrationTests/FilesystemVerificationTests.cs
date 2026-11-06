@@ -6,6 +6,20 @@ namespace KeelMatrix.KeyRingGuard.IntegrationTests;
 public sealed class FilesystemVerificationTests
 {
     [Fact]
+    public async Task RealProtectorsPreserveEvidenceThroughConsumingCallbacks()
+    {
+        using var store = new TemporaryKeyStore();
+        await KeelMatrix.KeyRingGuard.Tests.BufferBoundaryProbe.RunAsync(store.Path);
+    }
+
+    [Fact]
+    public async Task RealRestartRetiresOwnersAndExposesLifetimeDependentStores()
+    {
+        using var store = new TemporaryKeyStore();
+        await KeelMatrix.KeyRingGuard.Tests.RestartBoundaryProbe.RunAsync(store.Path);
+    }
+
+    [Fact]
     public async Task RestartContinuitySurvivesIndependentProviderRecreation()
     {
         using var store = new TemporaryKeyStore();

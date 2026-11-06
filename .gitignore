@@ -6,6 +6,11 @@ artifacts/
 TestResults/
 *.user
 *.suo
+*.userprefs
+.DS_Store
+Thumbs.db
+[Dd]esktop.ini
+.cache/
 *.nupkg
 *.snupkg
 *.log

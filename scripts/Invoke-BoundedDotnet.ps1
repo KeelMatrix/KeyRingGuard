@@ -2,7 +2,8 @@ function Invoke-BoundedDotnet {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [ValidateRange(1, 120000)][int]$TimeoutMilliseconds = 60000
+        [ValidateRange(1, 120000)][int]$TimeoutMilliseconds = 60000,
+        [switch]$IsolatedCredentials
     )
 
     $start = [Diagnostics.ProcessStartInfo]::new()
@@ -11,6 +12,14 @@ function Invoke-BoundedDotnet {
     $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
+    if ($IsolatedCredentials) {
+        foreach ($name in @($start.Environment.Keys)) {
+            if ($name -match '^(?i:NuGetPackageSourceCredentials_|NUGET_(?:API_KEY|SYMBOL_API_KEY|.*PLUGIN.*|CREDENTIALPROVIDERS_PATH)$|HTTP_PROXY$|HTTPS_PROXY$|ALL_PROXY$)') {
+                [void]$start.Environment.Remove($name)
+            }
+        }
+        $start.Environment['NUGET_PLUGIN_PATHS'] = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'no-nuget-plugins-' + [guid]::NewGuid().ToString('N'))
+    }
     foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start

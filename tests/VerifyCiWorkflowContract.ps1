@@ -6,6 +6,8 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { throw "CI workflow is missing: $WorkflowPath" }
 $text = Get-Content -Raw -LiteralPath $WorkflowPath
+. (Join-Path $PSScriptRoot '../build/Assert-WorkflowSdk.ps1')
+Assert-WorkflowSdk $text ((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..' 'global.json') | ConvertFrom-Json).sdk.version)
 
 $requiredFragments = @(
     'ubuntu-latest'
@@ -17,6 +19,12 @@ $requiredFragments = @(
     'dotnet test KeelMatrix.KeyRingGuard.sln --configuration Release --no-build'
     'dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release'
     'scripts/Test-ChangelogContract.ps1'
+    'tests/VerifyChangelogContract.ps1'
+    'tests/VerifyIdeIgnoreContract.ps1'
+    'tests/VerifyGateOrchestration.ps1'
+    'tests/VerifySdkIsolation.ps1'
+    'tests/VerifyPublicationContract.ps1'
+    '-Readiness'
     'tests/VerifyReleaseWorkflowContract.ps1'
     'tests/VerifyPackageIconContract.ps1'
     'tests/VerifyVulnerabilityAuditContract.ps1'

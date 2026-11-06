@@ -1058,7 +1058,7 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
-    public async Task RotationRejectsNonCanonicalBigEndianKeyId()
+    public async Task RotationTreatsDistinctAlternateBytesAsFailedCanonicalAdoption()
     {
         var manager = new ThreadScopedRotationKeyManager();
         var factory = new KeyRingProviderFactory(
@@ -1078,7 +1078,7 @@ public sealed class VerifierFailureTests
         var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
 
         Assert.False(result.Succeeded);
-        Assert.Equal(KeyRingFailureKind.RotationUnavailable, result.FailureKind);
+        Assert.Equal(KeyRingFailureKind.RotationFailure, result.FailureKind);
     }
 
     [Fact]

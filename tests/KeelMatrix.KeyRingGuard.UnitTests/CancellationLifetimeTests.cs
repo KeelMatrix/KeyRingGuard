@@ -141,7 +141,7 @@ public sealed class CancellationLifetimeTests
             var result = await task.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.Equal(cancel ? KeyRingFailureKind.Canceled : KeyRingFailureKind.Timeout, result.FailureKind);
             Assert.DoesNotContain("secret", result.Message, StringComparison.Ordinal);
-            Assert.Equal(0, disposed);
+            Assert.Equal(stage == "unprotect" ? 1 : 0, disposed); // Restart A retired before B's read.
         }
         finally
         {

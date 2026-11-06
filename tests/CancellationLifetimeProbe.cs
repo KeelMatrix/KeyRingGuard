@@ -151,7 +151,8 @@ internal static class CancellationLifetimeProbe
             var result = await verification.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             Require(result.FailureKind == (cancel ? KeyRingFailureKind.Canceled : KeyRingFailureKind.Timeout), "Stop classification");
             Require(received.IsCancellationRequested, "Active operation token must be signaled before the result");
-            Require(Volatile.Read(ref disposed) == 0, "Active operation retains every provider");
+            // A has already retired when the recreated B factory is active.
+            Require(Volatile.Read(ref disposed) == (site == "recreated" ? 1 : 0), "Active operation retains its provider; only restart A may already be retired");
             Require(!result.Message.Contains("secret", StringComparison.Ordinal), "Sanitized notification failure");
             if (handler != "none") { Require(handlerEntered.Wait(JoinBound, CancellationToken.None), "Handler dispatch"); }
             if (cancellation is not null) { await cancellation.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }

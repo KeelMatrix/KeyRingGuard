@@ -5,26 +5,20 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
 
-function Invoke-GateStep([string]$Name, [scriptblock]$Command) {
-    $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    Write-Output "== $Name =="
-    try {
-        & $Command
-        if ($LASTEXITCODE -ne 0) { throw "$Name failed with exit code $LASTEXITCODE." }
-        $watch.Stop()
-        Write-Output ("{0}: PASS ({1} ms)" -f $Name, $watch.ElapsedMilliseconds)
-    }
-    catch {
-        $watch.Stop()
-        Write-Output ("{0}: FAIL ({1} ms)" -f $Name, $watch.ElapsedMilliseconds)
-        throw
-    }
-}
+. (Join-Path $root 'build' 'Invoke-GateStep.ps1')
 
+Invoke-GateStep 'Hidden child PowerShell guard self-test' { & (Join-Path $root 'build' 'Test-NestedPwshLaunch.ps1') -SelfTest }
+Invoke-GateStep 'Hidden child PowerShell launch scan' { & (Join-Path $root 'build' 'Test-NestedPwshLaunch.ps1') }
 Invoke-GateStep 'Restore' { dotnet restore KeelMatrix.KeyRingGuard.sln }
 Invoke-GateStep 'Release build and public API analyzers' { dotnet build KeelMatrix.KeyRingGuard.sln --configuration Release --no-restore }
 Invoke-GateStep 'Tests' { dotnet test KeelMatrix.KeyRingGuard.sln --configuration Release --no-build }
 Invoke-GateStep 'Changelog contract tests' { & (Join-Path $root 'tests' 'VerifyChangelogContract.ps1') }
+Invoke-GateStep 'Readiness changelog' { & (Join-Path $PSScriptRoot 'Test-ChangelogContract.ps1') -Tag v0.1.0 -Readiness }
+Invoke-GateStep 'SDK selection' { & (Join-Path $PSScriptRoot 'Test-SdkSelection.ps1') }
+Invoke-GateStep 'Isolated SDK provisioning' { & (Join-Path $root 'tests' 'VerifySdkIsolation.ps1') }
+Invoke-GateStep 'Loopback publication contract' { & (Join-Path $root 'tests' 'VerifyPublicationContract.ps1') }
+Invoke-GateStep 'IDE ignore contract' { & (Join-Path $root 'tests' 'VerifyIdeIgnoreContract.ps1') }
+Invoke-GateStep 'Gate orchestration' { & (Join-Path $root 'tests' 'VerifyGateOrchestration.ps1') }
 Invoke-GateStep 'Release workflow contract' { & (Join-Path $root 'tests' 'VerifyReleaseWorkflowContract.ps1') }
 Invoke-GateStep 'Package icon contract' { & (Join-Path $root 'tests' 'VerifyPackageIconContract.ps1') }
 Invoke-GateStep 'CI workflow contract' { & (Join-Path $root 'tests' 'VerifyCiWorkflowContract.ps1') }
