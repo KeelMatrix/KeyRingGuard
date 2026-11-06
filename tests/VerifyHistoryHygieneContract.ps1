@@ -8,6 +8,12 @@ $ErrorActionPreference = 'Stop'
 $hygieneScript = Join-Path $RepositoryRoot 'scripts' 'Test-HistoryHygiene.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('keyringguard-history-contract-' + [Guid]::NewGuid().ToString('N'))
 
+function Write-FixtureMessage([string]$Message) {
+    $messagePath = Join-Path $scratch 'message.txt'
+    Set-Content -LiteralPath $messagePath -Value $Message -NoNewline -Encoding utf8
+    return $messagePath
+}
+
 function New-Fixture([string]$Name, [string]$Message) {
     $fixture = Join-Path $scratch $Name
     New-Item -ItemType Directory -Force -Path $fixture | Out-Null
@@ -17,7 +23,7 @@ function New-Fixture([string]$Name, [string]$Message) {
     git -C $fixture config user.name KeelMatrix
     git -C $fixture config user.email noreply@keelmatrix.dev
     git -C $fixture add README.md
-    git -C $fixture commit --quiet -m $Message
+    git -C $fixture commit --quiet --file (Write-FixtureMessage $Message)
     return $fixture
 }
 
@@ -25,7 +31,7 @@ function Add-Commit([string]$Fixture, [string]$Message, [string]$Branch = 'main'
     git -C $Fixture switch --create $Branch --quiet
     Set-Content -LiteralPath (Join-Path $Fixture "$Branch.txt") -Value $Branch -NoNewline
     git -C $Fixture add .
-    git -C $Fixture -c user.name=$Author -c user.email=noreply@example.invalid commit --quiet -m $Message
+    git -C $Fixture -c user.name=$Author -c user.email=noreply@example.invalid commit --quiet --file (Write-FixtureMessage $Message)
 }
 
 function Restore-Main([string]$Fixture) {
@@ -42,7 +48,7 @@ function Add-TagOnlyCommit([string]$Fixture, [string]$Message) {
 function Add-MergeCommit([string]$Fixture, [string]$Message) {
     Add-Commit $Fixture 'Clean side branch' 'merge-side'
     Restore-Main $Fixture
-    git -C $Fixture merge --no-ff --quiet merge-side -m $Message
+    git -C $Fixture merge --no-ff --quiet merge-side --file (Write-FixtureMessage $Message)
 }
 
 function Invoke-Hygiene([string]$Fixture) {
