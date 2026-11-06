@@ -14,21 +14,30 @@ namespace KeelMatrix.KeyRingGuard;
 /// This is the authoritative timeout, cleanup, and provider-ownership contract for the shipping API.
 /// A shared limit admits at most 32 verification lifecycles. Admission waits at most the primary
 /// factory's timeout and honors caller cancellation. Each lifecycle retains its reservation until
-/// all active operations and provider cleanup finish, even after the caller stops waiting.
+/// all active operations, cancellation notifications, and provider cleanup finish, even after the caller stops waiting.
 /// Provider, key-manager, rotation, and cleanup callbacks share a separate limit of 32 active callbacks.
-/// Each operation's configured timeout bounds observation, including scheduler admission; arbitrary
-/// running user code cannot be interrupted. Providers returned by the factories belong to the verification.
-/// Each distinct disposable provider is cleaned up once, after all operations in that verification finish.
+/// Each operation's configured timeout bounds observation, including scheduler admission. Before a stop
+/// result returns, its operation token is signaled; arbitrary cancellation registrations run asynchronously
+/// without delaying that result or consuming the primary callback slots. Signaling does not promise that
+/// every registration has run or completed. At most one unfinished cancellation dispatch is retained per
+/// terminating lifecycle, bounded by the 32 lifecycle reservations; it uses no dedicated notification thread.
+/// Successful operations seal their cancellation lifetime before the next scenario stage. A stop that wins
+/// that decision ends the scenario; caller cancellation takes priority when observed at the decision.
+/// Arbitrary running user code cannot be interrupted. Providers returned by factories belong to verification.
+/// Each distinct disposable provider is cleaned up once, after operations and owned notifications finish.
 /// Cleanup runs as one bounded batch per lifecycle, including late factory results, and is best effort:
 /// exceptions are suppressed, and a blocked provider delays later providers in its batch until it returns.
-/// When no operation remains active, the caller waits at most the primary factory's timeout for cleanup.
+/// When no operation or notification remains active, the caller waits at most the primary factory's timeout for cleanup.
 /// Cleanup timeout or exceptions preserve the scenario verdict; caller cancellation during that wait
-/// produces <see cref="KeyRingFailureKind.Canceled"/>. An already timed-out/canceled active operation
+/// produces <see cref="KeyRingFailureKind.Canceled"/>. An already timed-out/canceled active operation or notification
 /// adds no cleanup wait. Cleanup continues without cancellation and retains its reservation until finished.
 /// Thus permanently blocked user code can exhaust capacity, but repeated calls cannot accumulate owned
 /// providers, cleanup batches, or dedicated execution threads beyond these limits. Duration includes
 /// admission, scenario execution, and cleanup actually awaited; it excludes continuing background work.
-/// Callback re-entry on flowed execution context, including cleanup, is rejected before admission.
+/// Late operation and notification exceptions are observed without exposing consumer exception text.
+/// Registrations created after cancellation can execute inline on their operation's thread and remain
+/// owned by that operation. Work escaping a callback's declared task lifetime remains consumer-owned.
+/// Callback re-entry on flowed execution context, including cancellation handlers and cleanup, is rejected before admission.
 /// Deliberately severed execution-context flow remains unsupported.
 /// Rotation requires the standard header, a canonical little-endian key ID, and a non-empty body.
 /// Canonical key-ID bytes remain supported when both byte orders produce identical bytes.
@@ -748,29 +757,19 @@ public static class KeyRingVerifier
         var rotationStart = DateTimeOffset.UtcNow;
         var activationDate = rotationStart.AddSeconds(-1);
         var expirationDate = rotationStart.AddDays(1);
-        using var rotationTimeoutSource = new CancellationTokenSource(providerFactory.Timeout);
-        using var rotationLinkedSource = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            rotationTimeoutSource.Token);
-        var rotationResult = await ExecuteAsync(
-            () => providerFactory.CreateNewKeyWithSnapshotAsync(
-                manager.Manager!,
-                activationDate,
-                expirationDate,
-                SnapshotKeyIds,
-                rotationLinkedSource.Token),
+        var rotationResult = await ExecuteOwnedAsync(
+            token => KeyRingOperationScheduler.RunAsync(
+                () => providerFactory.CreateNewKeyWithSnapshotAsync(
+                    manager.Manager!, activationDate, expirationDate, SnapshotKeyIds, token), token),
             providerFactory.Timeout,
             providerScope,
-            rotationLinkedSource.Token,
             cancellationToken).ConfigureAwait(false);
         if (rotationResult.TimedOut)
         {
-            rotationLinkedSource.Cancel();
             return Failure(scenario, KeyRingFailureKind.Timeout, "Rotation timed out before the configured bound.");
         }
         if (rotationResult.Canceled)
         {
-            rotationLinkedSource.Cancel();
             return Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
         }
         if (rotationResult.Exception is not null)
@@ -1161,178 +1160,163 @@ public static class KeyRingVerifier
         return Failure(scenario, KeyRingFailureKind.UnexpectedCrossUnprotect, "Isolation failed: a provider from an isolated boundary successfully unprotected a payload.");
     }
 
-    private static async Task<BoundedOperation<T>> ExecuteBoundedAsync<T>(
+    private static Task<BoundedOperation<T>> ExecuteBoundedAsync<T>(
         Func<T> operation,
         TimeSpan timeout,
         ProviderScope providerScope,
-        CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return new(default, null, false, true);
-        }
+        CancellationToken cancellationToken) =>
+        ExecuteOwnedAsync(token => KeyRingOperationScheduler.Run(operation, token), timeout, providerScope, cancellationToken);
 
-        using var timeoutSource = new CancellationTokenSource(timeout);
-        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
-        Task<T> task;
-        try
-        {
-            task = RunScoped(operation, providerScope, linkedSource.Token);
-            ObserveFaults(task);
-        }
-        catch (Exception exception)
-        {
-            return new(default, exception, false, false);
-        }
-
-        try
-        {
-            return new(await task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false), null, false, false);
-        }
-        catch (TimeoutException)
-        {
-            linkedSource.Cancel();
-            return new(default, null, true, false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return new(default, null, false, true);
-        }
-        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
-        {
-            return new(default, null, true, false);
-        }
-        catch (Exception exception)
-        {
-            return new(default, exception, false, false);
-        }
-    }
-
-    private static async Task<BoundedOperation<T>> ExecuteAsync<T>(
-        Func<Task<T>> operation,
+    private static async Task<BoundedOperation<T>> ExecuteOwnedAsync<T>(
+        Func<CancellationToken, Task<T>> start,
         TimeSpan timeout,
         ProviderScope providerScope,
-        CancellationToken startCancellationToken,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<T>? acceptResult = null)
     {
         if (cancellationToken.IsCancellationRequested)
         {
             return new(default, null, false, true);
         }
 
-        Task<T> task;
+        var lifetime = new OperationLifetime<T>(timeout, providerScope.EnterOperation(), start, acceptResult, cancellationToken);
+        var task = lifetime.Operation;
+
         try
         {
-            task = RunScopedAsync(operation, providerScope, startCancellationToken);
-            if (task is null)
+            // Only the owned asynchronous signal wakes a stopped observer. A second
+            // caller-token wait could run this continuation inline inside caller.Cancel.
+            await Task.WhenAny(task, lifetime.Stopped).ConfigureAwait(false);
+
+            var stopped = lifetime.Seal();
+            if (stopped)
             {
-                return new(default, new InvalidOperationException(), false, false);
+                var canceled = cancellationToken.IsCancellationRequested;
+                return new(default, null, !canceled, canceled);
             }
 
-            ObserveFaults(task);
+            try
+            {
+                return new(await task.ConfigureAwait(false), null, false, false);
+            }
+            catch (Exception exception)
+            {
+                return new(default, exception, false, false);
+            }
         }
-        catch (Exception exception)
+        finally
         {
-            return new(default, exception, false, false);
-        }
-
-        try
-        {
-            return new(await task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false), null, false, false);
-        }
-        catch (TimeoutException)
-        {
-            return new(default, null, true, false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return new(default, null, false, true);
-        }
-        catch (OperationCanceledException) when (startCancellationToken.IsCancellationRequested)
-        {
-            return new(default, null, true, false);
-        }
-        catch (Exception exception)
-        {
-            return new(default, exception, false, false);
+            ObserveFaults(lifetime.DisposeAsync().AsTask());
         }
     }
 
-    private static void ObserveFaults<T>(Task<T> task) =>
+    private static async Task<T> AcceptAsync<T>(Task<T> task, Action<T>? acceptResult)
+    {
+        var value = await task.ConfigureAwait(false);
+        acceptResult?.Invoke(value);
+        return value;
+    }
+
+    private static void ObserveFaults(Task task) =>
         _ = task.ContinueWith(
             completed => _ = completed.Exception,
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-    private static Task<T> RunScoped<T>(
-        Func<T> operation,
-        ProviderScope providerScope,
-        CancellationToken cancellationToken)
+    // Owns the cancellation source through observer decision, actual operation completion,
+    // input-relay quiescence, and the FIRST notification dispatch's completion.
+    private sealed class OperationLifetime<T> : IAsyncDisposable
     {
-        var lease = providerScope.EnterOperation();
-        try
-        {
-            return ReleaseAfterCompletion(
-                KeyRingOperationScheduler.Run(operation, cancellationToken),
-                lease);
-        }
-        catch
-        {
-            lease.Dispose();
-            throw;
-        }
-    }
+        private readonly object _gate = new();
+        private readonly CancellationTokenSource _source = new();
+        private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly CancellationToken _caller;
+        private readonly IDisposable _lease;
+        private readonly Timer _deadline;
+        private readonly CancellationTokenRegistration _relay;
+        private Task? _notification;
+        private bool _sealed;
+        private Task? _finalization;
 
-    private static Task<T> RunScopedAsync<T>(
-        Func<Task<T>> operation,
-        ProviderScope providerScope,
-        CancellationToken cancellationToken)
-    {
-        var lease = providerScope.EnterOperation();
-        try
+        internal OperationLifetime(TimeSpan timeout, IDisposable lease, Func<CancellationToken, Task<T>> start, Action<T>? acceptResult, CancellationToken caller)
         {
-            return ReleaseAfterCompletion(
-                KeyRingOperationScheduler.RunAsync(operation, cancellationToken),
-                lease);
+            _caller = caller;
+            _lease = lease;
+            Token = _source.Token;
+            // No finalizer is published until construction and operation setup finish.
+            // An already-canceled caller can safely enter RequestStop during registration.
+            _deadline = new Timer(static state => ((OperationLifetime<T>)state!).RequestStop(), this,
+                Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _relay = caller.UnsafeRegister(static state => ((OperationLifetime<T>)state!).RequestStop(), this);
+            _deadline.Change(timeout, Timeout.InfiniteTimeSpan);
+            try { Operation = AcceptAsync(start(Token), acceptResult); }
+            catch (Exception exception) { Operation = Task.FromException<T>(exception); }
         }
-        catch
-        {
-            lease.Dispose();
-            throw;
-        }
-    }
 
-    private static async Task<T> ReleaseAfterCompletion<T>(Task<T> task, IDisposable lease)
-    {
-        try
-        {
-            return await task.ConfigureAwait(false);
-        }
-        finally
-        {
-            lease.Dispose();
-        }
-    }
+        internal Task<T> Operation { get; }
+        private CancellationToken Token { get; }
+        internal Task Stopped => _stopped.Task;
 
-    private static async Task<IDataProtectionProvider> TrackProviderAsync(
-        Task<IDataProtectionProvider> task,
-        ProviderScope providerScope,
-        IDisposable lease)
-    {
-        try
+        internal void RequestStop()
         {
-            var provider = await task.ConfigureAwait(false);
-            if (provider is not null)
+            lock (_gate)
             {
-                providerScope.Add(provider);
-            }
+                if (_sealed || _notification is not null)
+                {
+                    return;
+                }
 
-            return provider!;
+                // CancelAsync sets token state synchronously but runs arbitrary registrations
+                // asynchronously, outside the 32 callback slots. Later CancelAsync calls do
+                // not join the first dispatch, so retain this task exactly once.
+                _notification = _source.CancelAsync();
+                _stopped.TrySetResult();
+            }
         }
-        finally
+
+        internal bool Seal()
         {
-            lease.Dispose();
+            lock (_gate)
+            {
+                // Completion can win before the caller relay runs. Signal before selecting
+                // a stop result, while the observer still owns the live source.
+                if (_caller.IsCancellationRequested) { RequestStop(); }
+                _sealed = true;
+                return _notification is not null;
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            lock (_gate)
+            {
+                _sealed = true;
+                // Teardown is never awaited on the result path. Handles are fully initialized
+                // and the observer cannot request another stop before finalization starts.
+                return new(_finalization ??= FinalizeAsync());
+            }
+        }
+
+        private async Task FinalizeAsync()
+        {
+            try
+            {
+                await _deadline.DisposeAsync().ConfigureAwait(false);
+                await _relay.DisposeAsync().ConfigureAwait(false);
+                try { await Operation.ConfigureAwait(false); }
+                catch (Exception) { /* The observer or this owner consumes late operation faults. */ }
+                if (_notification is not null)
+                {
+                    try { await _notification.ConfigureAwait(false); }
+                    catch (Exception) { /* Notification failures never replace the stop verdict. */ }
+                }
+            }
+            finally
+            {
+                _source.Dispose();
+                _lease.Dispose();
+            }
         }
     }
 
@@ -1344,61 +1328,24 @@ public static class KeyRingVerifier
         ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
-        if (cancellationToken.IsCancellationRequested)
+        var operation = await ExecuteOwnedAsync(
+            factory.CreateProviderAsync, factory.Timeout, providerScope, cancellationToken,
+            provider => { if (provider is not null) { providerScope.Add(provider); } }).ConfigureAwait(false);
+        if (operation.Canceled)
         {
             return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
         }
-
-        using var timeoutSource = new CancellationTokenSource(factory.Timeout);
-        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
-        Task<IDataProtectionProvider> task;
-        IDisposable? lease = null;
-
-        try
-        {
-            lease = providerScope.EnterOperation();
-            var factoryTask = factory.CreateProviderAsync(linkedSource.Token);
-            if (factoryTask is null)
-            {
-                lease.Dispose();
-                lease = null;
-                return (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the factory returned no operation."));
-            }
-
-            task = TrackProviderAsync(factoryTask, providerScope, lease);
-            lease = null;
-            ObserveFaults(task);
-        }
-        catch (Exception)
-        {
-            lease?.Dispose();
-            return (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the configured factory could not create a provider."));
-        }
-
-        try
-        {
-            var provider = await task.WaitAsync(factory.Timeout, cancellationToken).ConfigureAwait(false);
-            return provider is null
-                ? (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the configured factory returned no provider."))
-                : (provider, null);
-        }
-        catch (TimeoutException)
-        {
-            linkedSource.Cancel();
-            return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Provider creation timed out before the configured bound."));
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
-        }
-        catch (OperationCanceledException)
+        if (operation.TimedOut || operation.Exception is OperationCanceledException)
         {
             return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Provider creation timed out before the configured bound."));
         }
-        catch (Exception)
+        if (operation.Exception is not null)
         {
             return (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the configured factory could not create a provider."));
         }
+        return operation.Value is null
+            ? (null, Failure(scenario, KeyRingFailureKind.ProviderCreation, "Provider creation failed: the configured factory returned no provider."))
+            : (operation.Value, null);
     }
 
     private static async Task<(IKeyManager? Manager, KeyRingVerificationResult? Failure)> CreateKeyManagerAsync(
@@ -1407,61 +1354,22 @@ public static class KeyRingVerifier
         ProviderScope providerScope,
         CancellationToken cancellationToken)
     {
-        if (cancellationToken.IsCancellationRequested)
+        var operation = await ExecuteOwnedAsync(factory.CreateKeyManagerAsync, factory.Timeout, providerScope, cancellationToken).ConfigureAwait(false);
+        if (operation.Canceled)
         {
             return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
         }
-
-        using var timeoutSource = new CancellationTokenSource(factory.Timeout);
-        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
-        Task<IKeyManager> task;
-        IDisposable? lease = null;
-
-        try
-        {
-            lease = providerScope.EnterOperation();
-            var factoryTask = factory.CreateKeyManagerAsync(linkedSource.Token);
-            if (factoryTask is null)
-            {
-                lease.Dispose();
-                lease = null;
-                return (null, Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the configured key-manager factory returned no operation."));
-            }
-
-            task = ReleaseAfterCompletion(factoryTask, lease);
-            lease = null;
-            ObserveFaults(task);
-        }
-        catch (Exception)
-        {
-            lease?.Dispose();
-            return (null, Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the configured key-manager factory could not create a manager."));
-        }
-
-        try
-        {
-            var manager = await task.WaitAsync(factory.Timeout, cancellationToken).ConfigureAwait(false);
-            return manager is null
-                ? (null, Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the configured key-manager factory returned no manager."))
-                : (manager, null);
-        }
-        catch (TimeoutException)
-        {
-            linkedSource.Cancel();
-            return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Key-manager creation timed out before the configured bound."));
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return (null, Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled."));
-        }
-        catch (OperationCanceledException)
+        if (operation.TimedOut || operation.Exception is OperationCanceledException)
         {
             return (null, Failure(scenario, KeyRingFailureKind.Timeout, "Key-manager creation timed out before the configured bound."));
         }
-        catch (Exception)
+        if (operation.Exception is not null)
         {
             return (null, Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the configured key-manager factory could not create a manager."));
         }
+        return operation.Value is null
+            ? (null, Failure(scenario, KeyRingFailureKind.RotationFailure, "Rotation failed: the configured key-manager factory returned no manager."))
+            : (operation.Value, null);
     }
 
     private static KeyRingVerificationResult Success(KeyRingScenario scenario, string message) =>

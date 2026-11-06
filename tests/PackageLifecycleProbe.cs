@@ -1,16 +1,26 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using KeelMatrix.KeyRingGuard;
+using KeelMatrix.KeyRingGuard.Tests;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.AuthenticatedEncryption;
 using Microsoft.AspNetCore.DataProtection.AuthenticatedEncryption.ConfigurationModel;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.DependencyInjection;
 
+if (args.Contains("--exit-probe", StringComparer.Ordinal)) { return 23; }
+if (args.Contains("--wait-probe", StringComparer.Ordinal)) { await Task.Delay(Timeout.InfiniteTimeSpan); return 0; }
+if (args.Contains("--throwing-handlers", StringComparer.Ordinal))
+{
+    await CancellationLifetimeProbe.RunAllAsync(throwing: true);
+    return 0;
+}
+
 var store = Path.Combine(Path.GetTempPath(), "keyringguard-lifecycle-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(store);
 try
 {
+    await CancellationLifetimeProbe.RunAllAsync(throwing: false);
     await VerifyRotations();
 
     foreach (var scenario in new[] { KeyRingScenario.RestartContinuity, KeyRingScenario.ReplicaSharing })
@@ -161,23 +171,28 @@ finally
 {
     Directory.Delete(store, recursive: true);
 }
+return 0;
 
 IDataProtectionProvider RealProvider() => DataProtectionProvider.Create(new DirectoryInfo(store), b => b.SetApplicationName("Lifecycle.App"));
 
 async Task VerifyRotations()
 {
-    foreach (var id in new[]
+    var ids = new List<string>();
+    foreach (var first in new[] { "12343412", "12343413" })
+    foreach (var second in new[] { "5656", "5657" })
+    foreach (var third in new[] { "4a4a", "4a4b" })
+    foreach (var tail in new[] { "8abc-0123456789ab", "8def-ffffffffffff" })
     {
-        "12343412-5656-4a4a-8abc-0123456789ab",
-        "12343412-5656-4a4a-8def-ffffffffffff",
-        "12343413-5656-4a4a-8abc-0123456789ab",
+        ids.Add($"{first}-{second}-{third}-{tail}");
+    }
+    ids.AddRange(new[] {
         "12353412-5656-4a4a-8abc-0123456789ab",
-        "12343412-5657-4a4a-8abc-0123456789ab",
-        "12343412-5656-4a4b-8abc-0123456789ab",
+        "12353512-5656-4a4a-8abc-0123456789ab",
         "12345678-1234-4567-8abc-0123456789ab",
         "00000000-0000-0000-0000-000000000000",
         "ffffffff-ffff-ffff-ffff-ffffffffffff",
-    })
+    });
+    foreach (var id in ids)
     foreach (var asynchronous in new[] { false, true })
     {
         var keyId = Guid.Parse(id);

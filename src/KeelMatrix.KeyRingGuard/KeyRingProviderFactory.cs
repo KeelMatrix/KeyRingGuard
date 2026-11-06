@@ -6,11 +6,14 @@ namespace KeelMatrix.KeyRingGuard;
 /// <summary>
 /// Defines how KeyRingGuard constructs an independent Data Protection provider.
 /// Each synchronous or asynchronous operation is observed with the configured bound by the verifier.
-/// A provider remains alive until its scheduled callbacks finish, including callbacks that outlive a timeout.
+/// A provider remains alive until its operations and owned cancellation notifications finish, including late work.
 /// </summary>
 /// <remarks>
 /// The <see cref="KeyRingVerifier"/> class remarks define the authoritative timeout, cleanup, and
-/// ownership contract. At most 32 verification lifecycles retain providers through active work and cleanup.
+/// ownership contract. At most 32 verification lifecycles retain providers through operations, cancellation
+/// notifications, and cleanup. A stop result signals the active operation token without waiting for consumer
+/// registrations. Notification dispatch uses no primary callback slot; at most one unfinished dispatch per
+/// terminating lifecycle is retained until it completes. A signal does not promise completed registrations.
 /// Provider, key-manager, rotation, and cleanup callbacks share a bounded scheduler with 32 callback slots.
 /// Cleanup is best effort and observed for at most the primary factory's timeout, without changing a
 /// scenario verdict on cleanup timeout or exception. Caller cancellation during cleanup returns Canceled.
@@ -18,7 +21,8 @@ namespace KeelMatrix.KeyRingGuard;
 /// <see cref="KeyRingFailureKind.InvalidScenario"/>. This attribution follows the flowed execution context;
 /// a callback that deliberately severs that context with <c>ExecutionContext.SuppressFlow</c>,
 /// <c>ThreadPool.UnsafeQueueUserWorkItem</c>, or a new <see cref="Thread"/> is outside that guard and is
-/// unsupported. Scheduler admission honors the caller's cancellation token.
+/// unsupported. Scheduler admission and the actual invocation boundary honor the operation token.
+/// A timeout covers admission and execution together; APIs without a token parameter remain observation-bounded only.
 /// </remarks>
 public sealed class KeyRingProviderFactory
 {
@@ -282,6 +286,7 @@ public sealed class KeyRingProviderFactory
         CancellationToken cancellationToken)
     {
         var existingKeyIds = snapshotKeyIds(manager);
+        cancellationToken.ThrowIfCancellationRequested();
         var newKey = await _createNewKey!(manager, activationDate, expirationDate, cancellationToken).ConfigureAwait(false);
         return (existingKeyIds, newKey);
     }
@@ -319,7 +324,7 @@ internal static class KeyRingOperationScheduler
         {
             startCancellationToken.ThrowIfCancellationRequested();
             return await Task.Factory.StartNew(
-                () => InvokeCallback(operation),
+                () => { startCancellationToken.ThrowIfCancellationRequested(); return InvokeCallback(operation); },
                 CancellationToken.None,
                 TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
                 TaskScheduler.Default).ConfigureAwait(false);
@@ -339,7 +344,7 @@ internal static class KeyRingOperationScheduler
         {
             startCancellationToken.ThrowIfCancellationRequested();
             return await Task.Factory.StartNew(
-                    () => InvokeCallbackAsync(operation),
+                    () => { startCancellationToken.ThrowIfCancellationRequested(); return InvokeCallbackAsync(operation); },
                     CancellationToken.None,
                     TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
                     TaskScheduler.Default)

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.DataProtection.KeyManagement;
 
 namespace KeelMatrix.KeyRingGuard.UnitTests;
 
+[Collection("Provider lifecycle")]
 public sealed class RotationRepresentationTests
 {
     private static readonly Guid OldKeyId = Guid.Parse("98765432-9876-4987-8abc-0123456789ab");

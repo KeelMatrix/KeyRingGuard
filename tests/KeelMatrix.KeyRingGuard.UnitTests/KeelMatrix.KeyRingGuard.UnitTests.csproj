@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\CancellationLifetimeProbe.cs" Link="CancellationLifetimeProbe.cs" />
     <ProjectReference Include="..\..\src\KeelMatrix.KeyRingGuard\KeelMatrix.KeyRingGuard.csproj" />
   </ItemGroup>
 </Project>

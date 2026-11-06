@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-BoundedDotnet.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('keyringguard-package-smoke-' + [Guid]::NewGuid().ToString('N'))
@@ -78,6 +79,7 @@ try {
     $lifecycle = Join-Path $scratch 'lifecycle'
     New-Item -ItemType Directory -Path $lifecycle | Out-Null
     Copy-Item -LiteralPath (Join-Path $root 'tests' 'PackageLifecycleProbe.cs') -Destination (Join-Path $lifecycle 'Program.cs')
+    Copy-Item -LiteralPath (Join-Path $root 'tests' 'CancellationLifetimeProbe.cs') -Destination (Join-Path $lifecycle 'CancellationLifetimeProbe.cs')
     $lifecycleProject = Join-Path $lifecycle 'Lifecycle.csproj'
     Set-Content -LiteralPath $lifecycleProject -Value @'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -93,8 +95,34 @@ try {
 '@
     dotnet restore $lifecycleProject --configfile $nugetConfig --no-cache --force --packages $packages
     if ($LASTEXITCODE -ne 0) { throw "Lifecycle consumer restore failed with exit code $LASTEXITCODE." }
-    dotnet run --project $lifecycleProject --configuration Release --no-restore
-    if ($LASTEXITCODE -ne 0) { throw "Lifecycle consumer failed with exit code $LASTEXITCODE." }
+    dotnet build $lifecycleProject --configuration Release --no-restore
+    if ($LASTEXITCODE -ne 0) { throw "Lifecycle consumer build failed with exit code $LASTEXITCODE." }
+    $lifecycleDll = Join-Path $lifecycle 'bin' 'Release' 'net8.0' 'Lifecycle.dll'
+    Invoke-BoundedDotnet -Arguments @($lifecycleDll)
+    Invoke-BoundedDotnet -Arguments @($lifecycleDll, '--throwing-handlers')
+    # Real nonzero-exit and deadline controls prove failures reach this smoke gate.
+    $exitRejected = $false
+    try { Invoke-BoundedDotnet -Arguments @($lifecycleDll, '--exit-probe') }
+    catch { if ($_.Exception.Data['ExitCode'] -ne 23) { throw }; $exitRejected = $true }
+    if (-not $exitRejected) { throw 'The child-process runner accepted a failing package probe.' }
+    $timeoutRejected = $false
+    try { Invoke-BoundedDotnet -Arguments @($lifecycleDll, '--wait-probe') -TimeoutMilliseconds 250 }
+    catch { if (-not $_.Exception.Data['TimedOut']) { throw }; $timeoutRejected = $true }
+    if (-not $timeoutRejected) { throw 'The child-process runner accepted an over-deadline package probe.' }
+    Write-Output 'Package child-process failure propagation: PASS (exit 23 and bounded termination)'
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($package)
+    try {
+        $entryStream = $archive.GetEntry('lib/net8.0/KeelMatrix.KeyRingGuard.dll').Open()
+        try { $packedHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($entryStream)) }
+        finally { $entryStream.Dispose() }
+    }
+    finally { $archive.Dispose() }
+    $loadedHash = (Get-FileHash -LiteralPath (Join-Path $lifecycle 'bin' 'Release' 'net8.0' 'KeelMatrix.KeyRingGuard.dll') -Algorithm SHA256).Hash
+    if ($loadedHash -ne $packedHash) { throw 'The loaded consumer assembly differs from the package DLL.' }
+    Write-Output "PACKAGE_DLL_SHA256=$packedHash LOADED_DLL_SHA256=$loadedHash"
+    Write-Output "NUPKG_SHA256=$((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash)"
     Write-Output 'Package consumer smoke: PASS'
 } finally {
     if ($null -eq $previousNuGetPackages) { Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue } else { $env:NUGET_PACKAGES = $previousNuGetPackages }
