@@ -30,6 +30,9 @@ namespace KeelMatrix.KeyRingGuard;
 /// admission, scenario execution, and cleanup actually awaited; it excludes continuing background work.
 /// Callback re-entry on flowed execution context, including cleanup, is rejected before admission.
 /// Deliberately severed execution-context flow remains unsupported.
+/// Rotation requires the standard header, a canonical little-endian key ID, and a non-empty body.
+/// Canonical key-ID bytes remain supported when both byte orders produce identical bytes.
+/// A distinguishable alternate byte order is unsupported; a canonical wrong or stale ID fails adoption.
 /// </remarks>
 public static class KeyRingVerifier
 {
@@ -948,16 +951,17 @@ public static class KeyRingVerifier
 
         var payloadKey = protectedPayload.AsSpan(4, 16);
         Span<byte> littleEndianKey = stackalloc byte[16];
-        Span<byte> bigEndianKey = stackalloc byte[16];
         keyId.TryWriteBytes(littleEndianKey);
-        keyId.TryWriteBytes(bigEndianKey, bigEndian: true, out _);
-        if (payloadKey.SequenceEqual(bigEndianKey))
+        // Canonical bytes can also match the alternate representation for symmetric IDs.
+        if (payloadKey.SequenceEqual(littleEndianKey))
         {
-            return RotationPayloadFormat.Unsupported;
+            return RotationPayloadFormat.StandardWithExpectedKey;
         }
 
-        return payloadKey.SequenceEqual(littleEndianKey)
-            ? RotationPayloadFormat.StandardWithExpectedKey
+        Span<byte> bigEndianKey = stackalloc byte[16];
+        keyId.TryWriteBytes(bigEndianKey, bigEndian: true, out _);
+        return payloadKey.SequenceEqual(bigEndianKey)
+            ? RotationPayloadFormat.Unsupported
             : RotationPayloadFormat.StandardButDifferentKey;
     }
 

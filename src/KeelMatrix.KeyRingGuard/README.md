@@ -90,4 +90,4 @@ Each configured timeout bounds observation of an operation, including queue admi
 
 Rotation additionally requires a cancellation-aware key-creation callback that returns a key absent from the opaque-key snapshot taken in the same bounded scheduled operation immediately before the callback, exactly one matching active non-revoked observed key, and a recreated provider that adopts that key. If the recreated provider does not return the standard ASP.NET Core Data Protection payload format, the result is `RotationUnavailable` because key adoption cannot be verified. Cancellation is cooperative for asynchronous callbacks.
 
-Read the [scenario guide](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/usage.md) and [verification boundary](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/what-it-proves.md).
+Read the [scenario guide](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/usage.md). The [verification boundary](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/what-it-proves.md) defines canonical rotation envelope support, including key IDs whose two byte orders are identical.

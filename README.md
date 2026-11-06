@@ -88,4 +88,4 @@ The public API follows a 0.x compatibility contract: minor releases may introduc
 
 ## Scenarios and evidence
 
-See the [installation and scenario guide](docs/usage.md) for replica sharing, boundary-attributed isolation, linked rotation/new-key adoption, provider factories, cleanup, and safe network-backed testing. See [what it proves](docs/what-it-proves.md) for the verification boundary.
+See the [installation and scenario guide](docs/usage.md) for replica sharing, boundary-attributed isolation, linked rotation/new-key adoption, provider factories, cleanup, and safe network-backed testing. The [verification boundary](docs/what-it-proves.md) defines canonical rotation envelope support, including key IDs whose two byte orders are identical.

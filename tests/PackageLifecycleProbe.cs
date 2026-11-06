@@ -2,11 +2,17 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using KeelMatrix.KeyRingGuard;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.AuthenticatedEncryption;
+using Microsoft.AspNetCore.DataProtection.AuthenticatedEncryption.ConfigurationModel;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.Extensions.DependencyInjection;
 
 var store = Path.Combine(Path.GetTempPath(), "keyringguard-lifecycle-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(store);
 try
 {
+    await VerifyRotations();
+
     foreach (var scenario in new[] { KeyRingScenario.RestartContinuity, KeyRingScenario.ReplicaSharing })
     {
         foreach (var cancel in new[] { false, true })
@@ -157,6 +163,75 @@ finally
 }
 
 IDataProtectionProvider RealProvider() => DataProtectionProvider.Create(new DirectoryInfo(store), b => b.SetApplicationName("Lifecycle.App"));
+
+async Task VerifyRotations()
+{
+    foreach (var id in new[]
+    {
+        "12343412-5656-4a4a-8abc-0123456789ab",
+        "12343412-5656-4a4a-8def-ffffffffffff",
+        "12343413-5656-4a4a-8abc-0123456789ab",
+        "12353412-5656-4a4a-8abc-0123456789ab",
+        "12343412-5657-4a4a-8abc-0123456789ab",
+        "12343412-5656-4a4b-8abc-0123456789ab",
+        "12345678-1234-4567-8abc-0123456789ab",
+        "00000000-0000-0000-0000-000000000000",
+        "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    })
+    foreach (var asynchronous in new[] { false, true })
+    {
+        var keyId = Guid.Parse(id);
+        var directory = Directory.CreateDirectory(Path.Combine(store, Guid.NewGuid().ToString("N")));
+        var generation = new ServiceCollection();
+        generation.AddDataProtection().PersistKeysToFileSystem(directory);
+        generation.Configure<KeyManagementOptions>(options => options.AutoGenerateKeys = false);
+        using var generationOwner = generation.BuildServiceProvider();
+        var manager = new RotationKeyManager(generationOwner.GetRequiredService<IKeyManager>(), keyId);
+        OwnedRotationProvider Provider()
+        {
+            var services = new ServiceCollection();
+            services.AddDataProtection().SetApplicationName("Rotation.App");
+            services.Configure<KeyManagementOptions>(options => options.AutoGenerateKeys = false);
+            services.AddSingleton<IKeyManager>(manager);
+            var owner = services.BuildServiceProvider();
+            return new OwnedRotationProvider(owner.GetRequiredService<IDataProtectionProvider>(), owner);
+        }
+
+        using var before = Provider();
+        var canary = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        var oldPayload = before.CreateProtector("rotation-proof").Protect(canary);
+        Require(oldPayload.AsSpan(4, 16).SequenceEqual(RotationKeyManager.OldId.ToByteArray()), "Old key adoption");
+        var factory = asynchronous
+            ? new KeyRingProviderFactory(
+                async _ => { await Task.Yield(); return Provider(); }, TimeSpan.FromSeconds(5),
+                async _ => { await Task.Yield(); return manager; },
+                async (m, activation, expiration, token) =>
+                {
+                    await Task.Yield();
+                    token.ThrowIfCancellationRequested();
+                    return m.CreateNewKey(activation, expiration);
+                })
+            : new KeyRingProviderFactory(
+                _ => Provider(), TimeSpan.FromSeconds(5), _ => manager,
+                (m, activation, expiration, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    return Task.FromResult(m.CreateNewKey(activation, expiration));
+                });
+        var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RotationContinuity, factory);
+        Require(result.Succeeded, $"Canonical rotation {id} async={asynchronous}: {result.FailureKind}");
+        using var after = Provider();
+        using var replica = Provider();
+        var newPayload = after.CreateProtector("rotation-proof").Protect(canary);
+        Require(newPayload.Length > 20 && newPayload.AsSpan(0, 4).SequenceEqual(new byte[] { 0x09, 0xF0, 0xC9, 0xF0 }), "Standard envelope");
+        Require(newPayload.AsSpan(4, 16).SequenceEqual(keyId.ToByteArray()), "New key adoption");
+        var reader = replica.CreateProtector("rotation-proof");
+        Require(reader.Unprotect(oldPayload).SequenceEqual(canary), "Old payload continuity");
+        Require(reader.Unprotect(newPayload).SequenceEqual(canary), "New payload continuity");
+        Console.WriteLine($"PACKAGE_ROTATION id={id} async={asynchronous} result={result.FailureKind} canonical=true old_readable=true new_readable=true");
+    }
+}
+
 static void Require(bool condition, string invariant)
 {
     if (!condition) { throw new InvalidOperationException(invariant); }
@@ -166,4 +241,45 @@ sealed class DisposalProvider(IDataProtectionProvider inner, Action dispose) : I
 {
     public IDataProtector CreateProtector(string purpose) => inner.CreateProtector(purpose);
     public void Dispose() => dispose();
+}
+
+sealed class RotationKeyManager : IKeyManager
+{
+    internal static readonly Guid OldId = Guid.Parse("98765432-9876-4987-8abc-0123456789ab");
+    private readonly IKeyManager _generator;
+    private readonly Guid _nextId;
+    private readonly List<IKey> _keys = [];
+    public RotationKeyManager(IKeyManager generator, Guid nextId)
+    {
+        _generator = generator;
+        _nextId = nextId;
+        _keys.Add(new KeyWithId(generator.CreateNewKey(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(2)), OldId));
+    }
+    public IKey CreateNewKey(DateTimeOffset activationDate, DateTimeOffset expirationDate)
+    {
+        var key = new KeyWithId(_generator.CreateNewKey(activationDate, expirationDate), _nextId);
+        _keys.Add(key);
+        return key;
+    }
+    public IReadOnlyCollection<IKey> GetAllKeys() => _keys.ToArray();
+    public CancellationToken GetCacheExpirationToken() => CancellationToken.None;
+    public void RevokeKey(Guid keyId, string? reason) => throw new NotSupportedException();
+    public void RevokeAllKeys(DateTimeOffset revocationDate, string? reason) => throw new NotSupportedException();
+}
+
+sealed class KeyWithId(IKey inner, Guid id) : IKey
+{
+    public Guid KeyId => id;
+    public DateTimeOffset ActivationDate => inner.ActivationDate;
+    public DateTimeOffset CreationDate => inner.CreationDate;
+    public DateTimeOffset ExpirationDate => inner.ExpirationDate;
+    public bool IsRevoked => inner.IsRevoked;
+    public IAuthenticatedEncryptorDescriptor Descriptor => inner.Descriptor;
+    public IAuthenticatedEncryptor CreateEncryptor() => inner.CreateEncryptor()!;
+}
+
+sealed class OwnedRotationProvider(IDataProtectionProvider inner, IDisposable owner) : IDataProtectionProvider, IDisposable
+{
+    public IDataProtector CreateProtector(string purpose) => inner.CreateProtector(purpose);
+    public void Dispose() => owner.Dispose();
 }

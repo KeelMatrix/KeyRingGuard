@@ -14,7 +14,7 @@ This changelog records consumer-facing changes to KeelMatrix.KeyRingGuard.
 - Classifies queue-admission timeouts separately from caller cancellation and validates rotation against a genuinely new key plus exactly one matching, active, non-revoked observed key.
 - Adds end-to-end filesystem coverage for successful asynchronous provider, key-manager, and rotation callbacks, while preserving sanitized async failure handling.
 - Requires isolation cross-checks to use the standard ASP.NET Core persisted-protector contract, so arbitrary provider cryptographic failures cannot become false isolation passes.
-- Requires rotation payloads to use the canonical little-endian key ID and a non-empty encryptor-specific body; truncated or alternate-endian envelopes are unavailable for adoption verification.
+- Requires rotation payloads to use the canonical little-endian key ID and a non-empty encryptor-specific body; truncated envelopes and alternate key-ID bytes that differ from canonical are unavailable for adoption verification, while canonical IDs shared by both byte orders remain supported.
 
 ## [0.1.0] - 2026-09-26
 
