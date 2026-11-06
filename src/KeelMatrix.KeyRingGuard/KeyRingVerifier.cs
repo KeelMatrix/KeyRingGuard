@@ -10,6 +10,27 @@ namespace KeelMatrix.KeyRingGuard;
 /// Isolation rejection is attributed only when the cross-check protector implements the standard
 /// ASP.NET Core persisted-protector contract; arbitrary provider exceptions fail closed.
 /// </summary>
+/// <remarks>
+/// This is the authoritative timeout, cleanup, and provider-ownership contract for the shipping API.
+/// A shared limit admits at most 32 verification lifecycles. Admission waits at most the primary
+/// factory's timeout and honors caller cancellation. Each lifecycle retains its reservation until
+/// all active operations and provider cleanup finish, even after the caller stops waiting.
+/// Provider, key-manager, rotation, and cleanup callbacks share a separate limit of 32 active callbacks.
+/// Each operation's configured timeout bounds observation, including scheduler admission; arbitrary
+/// running user code cannot be interrupted. Providers returned by the factories belong to the verification.
+/// Each distinct disposable provider is cleaned up once, after all operations in that verification finish.
+/// Cleanup runs as one bounded batch per lifecycle, including late factory results, and is best effort:
+/// exceptions are suppressed, and a blocked provider delays later providers in its batch until it returns.
+/// When no operation remains active, the caller waits at most the primary factory's timeout for cleanup.
+/// Cleanup timeout or exceptions preserve the scenario verdict; caller cancellation during that wait
+/// produces <see cref="KeyRingFailureKind.Canceled"/>. An already timed-out/canceled active operation
+/// adds no cleanup wait. Cleanup continues without cancellation and retains its reservation until finished.
+/// Thus permanently blocked user code can exhaust capacity, but repeated calls cannot accumulate owned
+/// providers, cleanup batches, or dedicated execution threads beyond these limits. Duration includes
+/// admission, scenario execution, and cleanup actually awaited; it excludes continuing background work.
+/// Callback re-entry on flowed execution context, including cleanup, is rejected before admission.
+/// Deliberately severed execution-context flow remains unsupported.
+/// </remarks>
 public static class KeyRingVerifier
 {
     private const string SharedPurpose = "KeelMatrix.KeyRingGuard.Verification";
@@ -21,15 +42,15 @@ public static class KeyRingVerifier
     /// <param name="scenario">The immutable scenario description to execute.</param>
     /// <param name="providerFactory">The primary provider factory.</param>
     /// <param name="secondaryProviderFactory">The second factory required by replica and application-isolation scenarios.</param>
-    /// <param name="cancellationToken">Cancels provider creation and verification operations.</param>
+    /// <param name="cancellationToken">Cancels admission and waiting for verification operations and cleanup.</param>
     /// <returns>A structured result that never includes key material, canaries, or raw provider exceptions.</returns>
     /// <remarks>
-    /// A verification started on a provider, key-manager, or rotation callback's own execution flow returns
+    /// A verification started on a provider, key-manager, rotation, or cleanup callback's own execution flow returns
     /// <see cref="KeyRingFailureKind.InvalidScenario"/> before scheduler admission. The guard follows flowed
     /// execution context; a callback that deliberately severs it with <c>ExecutionContext.SuppressFlow</c>,
     /// <c>ThreadPool.UnsafeQueueUserWorkItem</c>, or a new <see cref="Thread"/> is outside the guard and is
-    /// unsupported. The shared scheduler has 32 callback slots and honors <paramref name="cancellationToken"/>
-    /// while admitting queued work.
+    /// unsupported. The class remarks define lifecycle admission, the shared 32 callback slots,
+    /// bounded cleanup observation, and provider ownership.
     /// </remarks>
     public static async Task<KeyRingVerificationResult> VerifyAsync(
         KeyRingScenario scenario,
@@ -53,7 +74,7 @@ public static class KeyRingVerifier
     /// <param name="providerFactory">The primary provider factory.</param>
     /// <param name="secondaryProviderFactory">The second factory required by replica and isolation scenarios.</param>
     /// <param name="isolationControl">The same-boundary control required by application isolation.</param>
-    /// <param name="cancellationToken">Cancels provider creation and verification operations.</param>
+    /// <param name="cancellationToken">Cancels admission and waiting for verification operations and cleanup.</param>
     /// <returns>A structured result that never includes key material, canaries, or raw provider exceptions.</returns>
     /// <remarks>
     /// This entry point has the same callback re-entry boundary as <see cref="VerifyAsync"/>: a verification
@@ -83,12 +104,25 @@ public static class KeyRingVerifier
             return Failure(
                 scenario,
                 KeyRingFailureKind.InvalidScenario,
-                "Verification cannot be started from a provider, key-manager, or rotation callback.");
+                "Verification cannot be started from a provider, key-manager, rotation, or cleanup callback.");
         }
 
         var stopwatch = Stopwatch.StartNew();
         var canary = RandomNumberGenerator.GetBytes(32);
-        using var providerScope = new ProviderScope();
+        ProviderScope providerScope;
+        try
+        {
+            providerScope = await ProviderScope.CreateAsync(providerFactory.Timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return new(scenario, false, KeyRingFailureKind.Canceled, "Verification was canceled.", stopwatch.Elapsed);
+        }
+        catch (TimeoutException)
+        {
+            return new(scenario, false, KeyRingFailureKind.Timeout, "Verification admission timed out before the configured bound.", stopwatch.Elapsed);
+        }
+
         try
         {
             KeyRingVerificationResult result;
@@ -123,6 +157,15 @@ public static class KeyRingVerifier
             else
             {
                 result = Failure(scenario, KeyRingFailureKind.InvalidScenario, "The requested scenario is not supported.");
+            }
+
+            try
+            {
+                await providerScope.CompleteAsync(providerFactory.Timeout, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                result = Failure(scenario, KeyRingFailureKind.Canceled, "Verification was canceled.");
             }
 
             stopwatch.Stop();
@@ -1425,10 +1468,53 @@ public static class KeyRingVerifier
 
     private sealed class ProviderScope : IDisposable
     {
+        // Reserve ownership before creating providers, not after callbacks return. A blocked
+        // operation or cleanup retains its reservation, bounding retained cleanup batches too.
+        private static readonly SemaphoreSlim Lifecycles = new(32, 32);
         private readonly object _gate = new();
         private readonly HashSet<IDisposable> _providers = new(ReferenceEqualityComparer.Instance);
+        private readonly TaskCompletionSource _cleanupCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _activeOperations;
         private bool _disposed;
+
+        private ProviderScope() { }
+
+        internal static async Task<ProviderScope> CreateAsync(TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            if (!await Lifecycles.WaitAsync(timeout, cancellationToken).ConfigureAwait(false))
+            {
+                throw new TimeoutException();
+            }
+
+            return new ProviderScope();
+        }
+
+        internal async Task CompleteAsync(TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            Dispose();
+            lock (_gate)
+            {
+                // A late operation still owns the provider. Do not add another timeout
+                // to observation of an operation that already timed out or was canceled.
+                if (_activeOperations != 0)
+                {
+                    return;
+                }
+            }
+
+            try
+            {
+                await _cleanupCompletion.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (TimeoutException)
+            {
+                // Cleanup is best effort and does not replace the scenario verdict.
+                // The reservation remains held until cleanup actually finishes.
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+        }
 
         internal IDisposable EnterOperation()
         {
@@ -1447,22 +1533,11 @@ public static class KeyRingVerifier
                 return;
             }
 
-            var disposeImmediately = false;
             lock (_gate)
             {
-                if (_disposed && _activeOperations == 0)
-                {
-                    disposeImmediately = true;
-                }
-                else
-                {
-                    _providers.Add(disposable);
-                }
-            }
-
-            if (disposeImmediately)
-            {
-                DisposeProvider(disposable);
+                // Add is always called under an active operation lease, including
+                // a factory that returns after the caller has stopped waiting.
+                _providers.Add(disposable);
             }
         }
 
@@ -1483,7 +1558,7 @@ public static class KeyRingVerifier
                 }
             }
 
-            DisposeProviders(providers);
+            StartCleanup(providers);
         }
 
         private void ExitOperation()
@@ -1498,7 +1573,7 @@ public static class KeyRingVerifier
                 }
             }
 
-            DisposeProviders(providers);
+            StartCleanup(providers);
         }
 
         private IDisposable[] TakeProviders()
@@ -1508,16 +1583,40 @@ public static class KeyRingVerifier
             return providers;
         }
 
-        private static void DisposeProviders(IDisposable[]? providers)
+        private void StartCleanup(IDisposable[]? providers)
         {
             if (providers is null)
             {
                 return;
             }
 
-            for (var index = providers.Length - 1; index >= 0; index--)
+            _ = CleanupAsync(providers);
+        }
+
+        private async Task CleanupAsync(IDisposable[] providers)
+        {
+            try
             {
-                DisposeProvider(providers[index]);
+                if (providers.Length != 0)
+                {
+                    // One batch per reserved lifecycle. Use the same callback slots
+                    // and re-entry guard as provider operations, without canceling
+                    // cleanup of providers whose ownership we already accepted.
+                    await KeyRingOperationScheduler.Run(() =>
+                    {
+                        for (var index = providers.Length - 1; index >= 0; index--)
+                        {
+                            DisposeProvider(providers[index]);
+                        }
+
+                        return true;
+                    }, CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                Lifecycles.Release();
+                _cleanupCompletion.TrySetResult();
             }
         }
 

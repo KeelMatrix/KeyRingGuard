@@ -72,6 +72,29 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Package consumer build failed with exit code $LASTEXITCODE." }
     dotnet run --project $consumer --configuration Release --no-restore --no-build
     if ($LASTEXITCODE -ne 0) { throw "Package consumer smoke failed with exit code $LASTEXITCODE." }
+
+    # Compile outside the repository so no repository props, project references, or
+    # dependency overrides can hide a problem in the actual PackageReference consumer.
+    $lifecycle = Join-Path $scratch 'lifecycle'
+    New-Item -ItemType Directory -Path $lifecycle | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root 'tests' 'PackageLifecycleProbe.cs') -Destination (Join-Path $lifecycle 'Program.cs')
+    $lifecycleProject = Join-Path $lifecycle 'Lifecycle.csproj'
+    Set-Content -LiteralPath $lifecycleProject -Value @'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework><OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="KeelMatrix.KeyRingGuard" Version="0.1.0" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.Extensions" Version="8.0.31" />
+  </ItemGroup>
+</Project>
+'@
+    dotnet restore $lifecycleProject --configfile $nugetConfig --no-cache --force --packages $packages
+    if ($LASTEXITCODE -ne 0) { throw "Lifecycle consumer restore failed with exit code $LASTEXITCODE." }
+    dotnet run --project $lifecycleProject --configuration Release --no-restore
+    if ($LASTEXITCODE -ne 0) { throw "Lifecycle consumer failed with exit code $LASTEXITCODE." }
     Write-Output 'Package consumer smoke: PASS'
 } finally {
     if ($null -eq $previousNuGetPackages) { Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue } else { $env:NUGET_PACKAGES = $previousNuGetPackages }

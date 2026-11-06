@@ -6,7 +6,9 @@ This changelog records consumer-facing changes to KeelMatrix.KeyRingGuard.
 
 ### Fixed
 
-- Rejects nested KeyRingGuard verification started on a provider, key-manager, or rotation callback's flowed execution context before scheduler admission; the 32-slot scheduler honors caller cancellation, while deliberately severed callback context is outside the supported guard.
+- Bounds provider ownership through final and late cleanup with 32 lifecycle reservations and the shared callback scheduler; cleanup observation honors timeout and caller cancellation, and Duration includes cleanup actually awaited.
+
+- Rejects nested KeyRingGuard verification started on a provider, key-manager, rotation, or cleanup callback's flowed execution context before scheduler admission; the 32-slot scheduler honors caller cancellation, while deliberately severed callback context is outside the supported guard.
 - Reports `RotationUnavailable` with an actionable standard-payload-format diagnostic when key adoption cannot be verified, while retaining `RotationFailure` for standard-format adoption failures.
 - Keeps providers alive until timed-out callbacks finish and removes canceled callbacks before scheduler admission, preventing disposal races and queued-work retention.
 - Classifies queue-admission timeouts separately from caller cancellation and validates rotation against a genuinely new key plus exactly one matching, active, non-revoked observed key.
@@ -20,7 +22,7 @@ This changelog records consumer-facing changes to KeelMatrix.KeyRingGuard.
 
 - Provides bounded verification for restart continuity, replica sharing, application and purpose isolation, and opt-in rotation continuity using caller-supplied ASP.NET Core Data Protection providers.
 - Requires independent provider instances for restart and replica transitions, explicit backing-store boundary identities before application-isolation verdicts, and a cancellation-aware linked rotation operation that takes the opaque key-ID snapshot and invokes the callback in one bounded scheduled operation, returns a key absent from that snapshot, proves the recreated provider adopts exactly one matching active, non-revoked key, and preserves pre- and post-rotation canaries.
-- Disposes every created disposable provider, including early-exit and late-timeout completions, and bounds synchronous callback scheduling without exposing callback exceptions or secret material.
+- Attempts exactly-once best-effort cleanup of every distinct disposable provider after active operations finish, including early-exit and late-timeout completions, and bounds lifecycle admission and callback scheduling without exposing callback exceptions or secret material.
 - Keeps timeout observation reliable when synchronous callbacks block under concurrent cross-platform test or application activity by running bounded callback work in dedicated scheduler slots.
 - Generates synthetic ephemeral canaries and sanitized diagnostics that exclude key material, key XML, provider configuration, and plaintext payloads.
 - Targets `net8.0`, remains provider-neutral, and has no telemetry or provider SDK dependency.

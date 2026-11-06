@@ -9,7 +9,11 @@ namespace KeelMatrix.KeyRingGuard;
 /// A provider remains alive until its scheduled callbacks finish, including callbacks that outlive a timeout.
 /// </summary>
 /// <remarks>
-/// Provider, key-manager, and rotation callbacks run through a bounded scheduler with 32 callback slots.
+/// The <see cref="KeyRingVerifier"/> class remarks define the authoritative timeout, cleanup, and
+/// ownership contract. At most 32 verification lifecycles retain providers through active work and cleanup.
+/// Provider, key-manager, rotation, and cleanup callbacks share a bounded scheduler with 32 callback slots.
+/// Cleanup is best effort and observed for at most the primary factory's timeout, without changing a
+/// scenario verdict on cleanup timeout or exception. Caller cancellation during cleanup returns Canceled.
 /// A verification started on a callback's own execution flow is rejected before scheduler admission with
 /// <see cref="KeyRingFailureKind.InvalidScenario"/>. This attribution follows the flowed execution context;
 /// a callback that deliberately severs that context with <c>ExecutionContext.SuppressFlow</c>,
@@ -233,6 +237,7 @@ public sealed class KeyRingProviderFactory
 
     /// <summary>
     /// Gets the per-operation timeout applied by the verifier.
+    /// When this is the primary factory, also bounds lifecycle admission and cleanup observation.
     /// </summary>
     public TimeSpan Timeout { get; }
 

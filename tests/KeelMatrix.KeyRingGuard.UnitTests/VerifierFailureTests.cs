@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.DataProtection.KeyManagement;
 
 namespace KeelMatrix.KeyRingGuard.UnitTests;
 
+[Collection("Provider lifecycle")]
 public sealed class VerifierFailureTests
 {
     [Fact]
@@ -36,6 +37,9 @@ public sealed class VerifierFailureTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
+        var disposed = 0;
+        completion.SetResult(new FakeProvider(dispose: () => Interlocked.Increment(ref disposed)));
+        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref disposed) == 1, TimeSpan.FromSeconds(3)));
     }
 
     [Fact]
@@ -381,48 +385,33 @@ public sealed class VerifierFailureTests
     }
 
     [Fact]
-    public async Task QueuedSynchronousProtectTimeoutIsReportedAsTimeout()
+    public async Task SaturatedSynchronousProtectsAndQueuedAdmissionReportTimeout()
     {
         using var release = new ManualResetEventSlim();
-        using var capacityObserved = new ManualResetEventSlim();
         var started = 0;
-        Task[] blockers = [];
         var blockerFactory = new KeyRingProviderFactory(
-            _ =>
+            _ => new FakeProvider(protect: value =>
             {
                 Interlocked.Increment(ref started);
                 release.Wait(CancellationToken.None);
-                return new FakeProvider();
-            },
-            TimeSpan.FromSeconds(5));
-        var provider = new FakeProvider(
-            createProtector: _ =>
-            {
-                using (ExecutionContext.SuppressFlow())
-                {
-                    blockers = Enumerable.Range(0, 64)
-                        .Select(_ => Task.Run(() => KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, blockerFactory)))
-                        .ToArray();
-                }
-
-                if (SpinWait.SpinUntil(() => Volatile.Read(ref started) >= 30, TimeSpan.FromSeconds(5)))
-                {
-                    capacityObserved.Set();
-                }
-
-                return new FakeProtector(null, payload => payload);
-            });
-        var targetFactory = new KeyRingProviderFactory(_ => provider, TimeSpan.FromMilliseconds(500));
+                return value;
+            }), TimeSpan.FromMilliseconds(500));
+        var blockers = Enumerable.Range(0, 32)
+            .Select(_ => KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, blockerFactory)).ToArray();
+        var queuedCalls = 0;
+        var targetFactory = new KeyRingProviderFactory(_ =>
+        {
+            Interlocked.Increment(ref queuedCalls);
+            return new FakeProvider();
+        }, TimeSpan.FromMilliseconds(40));
 
         try
         {
-            var result = await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, targetFactory);
-
-            Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind);
-            Assert.True(
-                capacityObserved.Wait(TimeSpan.FromSeconds(2)),
-                $"started={Volatile.Read(ref started)}, blockers={blockers.Length}");
-            Assert.InRange(Volatile.Read(ref started), 30, 32);
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref started) == 32, TimeSpan.FromSeconds(3)));
+            Assert.Equal(KeyRingFailureKind.Timeout, (await KeyRingVerifier.VerifyAsync(KeyRingScenario.RestartContinuity, targetFactory)).FailureKind);
+            var results = await Task.WhenAll(blockers).WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.All(results, result => Assert.Equal(KeyRingFailureKind.Timeout, result.FailureKind));
+            Assert.Equal(0, queuedCalls);
         }
         finally
         {
@@ -655,7 +644,7 @@ public sealed class VerifierFailureTests
                 Assert.False(result.Succeeded);
                 Assert.Equal(KeyRingFailureKind.InvalidScenario, result.FailureKind);
                 Assert.Equal(
-                    "Verification cannot be started from a provider, key-manager, or rotation callback.",
+                    "Verification cannot be started from a provider, key-manager, rotation, or cleanup callback.",
                     result.Message);
             });
         Assert.Equal(0, Volatile.Read(ref nestedFactoryInvocations));
@@ -740,7 +729,7 @@ public sealed class VerifierFailureTests
             Assert.False(nestedResult.Succeeded);
             Assert.Equal(KeyRingFailureKind.InvalidScenario, nestedResult.FailureKind);
             Assert.Equal(
-                "Verification cannot be started from a provider, key-manager, or rotation callback.",
+                "Verification cannot be started from a provider, key-manager, rotation, or cleanup callback.",
                 nestedResult.Message);
             Assert.Equal(0, Volatile.Read(ref probe.NestedFactoryInvocations));
         });
@@ -775,7 +764,7 @@ public sealed class VerifierFailureTests
             Assert.False(nestedResult.Succeeded);
             Assert.Equal(KeyRingFailureKind.InvalidScenario, nestedResult.FailureKind);
             Assert.Equal(
-                "Verification cannot be started from a provider, key-manager, or rotation callback.",
+                "Verification cannot be started from a provider, key-manager, rotation, or cleanup callback.",
                 nestedResult.Message);
         });
         Assert.Equal(0, Volatile.Read(ref probe.NestedFactoryInvocations));

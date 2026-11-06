@@ -24,11 +24,11 @@ pwsh ./scripts/Invoke-LocalGate.ps1
 ## Invariants
 
 - The shipping target framework is `net8.0`.
-- Provider construction is caller-owned; the library never creates an implicit fallback provider.
+- Provider configuration is caller-owned; the library never creates an implicit fallback provider.
 - Application-isolation factories must share an explicit `KeyRingBoundary` identity with their control factories.
 - Verification uses synthetic, ephemeral canaries and fixed diagnostics. It never reads, writes, or emits key XML or master key material.
 - No verifier operation deletes or revokes keys. Rotation verification requires explicitly supplied linked key-manager and cancellation-aware key-creation factories, snapshots opaque key IDs and invokes the callback in one bounded scheduled operation after setup succeeds, rejects pre-existing/no-op key returns, and uses a dedicated test store.
-- Provider, key-manager, and rotation callbacks run through 32 bounded scheduler slots. A nested KeyRingGuard verification started on the callback's own flowed execution context returns `InvalidScenario` before scheduler admission, and queued admission honors the caller's cancellation token. A callback that deliberately severs flow with `ExecutionContext.SuppressFlow`, `ThreadPool.UnsafeQueueUserWorkItem`, or a new thread is outside this guard and unsupported.
+- The class XML remarks in `src/KeelMatrix.KeyRingGuard/KeyRingVerifier.cs` own the timeout/cleanup/ownership contract. At most 32 verification lifecycles retain providers until active operations and best-effort cleanup finish. Provider, key-manager, rotation, and cleanup callbacks share 32 bounded scheduler slots; result observation includes a bounded cleanup wait, and caller cancellation during that wait returns `Canceled`. A nested KeyRingGuard verification started on the callback's own flowed execution context returns `InvalidScenario` before scheduler admission, and queued admission honors the caller's cancellation token. A callback that deliberately severs flow with `ExecutionContext.SuppressFlow`, `ThreadPool.UnsafeQueueUserWorkItem`, or a new thread is outside this guard and unsupported.
 - Isolation verdicts require the same-boundary control to pass and the cross-check protector to implement the standard ASP.NET Core persisted-protector contract; arbitrary provider exceptions fail closed. Rotation payload classification accepts only the canonical little-endian key ID and a non-empty encryptor-specific payload after the standard `09 F0 C9 F0` header.
 - The package has no network behavior and no telemetry dependency. A caller-supplied provider factory may use a network-backed store.
 - Test projects and the package consumer are not packable and must not become package dependencies.
