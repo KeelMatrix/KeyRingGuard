@@ -18,6 +18,23 @@ $text = Get-Content -Raw -LiteralPath $WorkflowPath
 $sdkVersion = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..' 'global.json') | ConvertFrom-Json).sdk.version
 Assert-WorkflowSdk $text $sdkVersion
 if ($text -match '(?m)^.*Test-ChangelogContract.ps1.*-Readiness') { throw 'The tag workflow cannot use draft readiness validation.' }
+function Assert-StrictReleaseGate([string]$Workflow) {
+    $job = [regex]::Match($Workflow, '(?ms)^  validate-release:.*?(?=^  publish:|\z)').Value
+    $steps = @([regex]::Matches($job, '(?ms)^      - name:.*?(?=^      - name:|\z)') | ForEach-Object Value)
+    $gate = @($steps | Where-Object { $_ -match '(?m)^        run: pwsh -NoProfile -File scripts/Test-ChangelogContract[.]ps1\r?$' })
+    if ($gate.Count -ne 1 -or $gate[0] -match '(?m)^        (?:if|continue-on-error):' -or $gate[0] -notmatch 'RELEASE_TAG: \$\{\{ github.ref_name \}\}' -or $gate[0] -notmatch 'EXPECTED_COMMIT: \$\{\{ github.sha \}\}') { throw 'A direct, unconditional strict tag/commit gate is required.' }
+    $index = [array]::IndexOf($steps, $gate[0])
+    for ($i = 0; $i -lt $index; $i++) {
+        if ($steps[$i] -match 'dotnet (?:restore|build|test|pack)|upload-artifact|NuGet/login|Publish-ReleaseArtifacts') { throw 'Release effects cannot precede strict validation.' }
+    }
+    if ($Workflow -notmatch '(?m)^    needs: validate-release\r?$') { throw 'Publish must depend on strict release validation.' }
+}
+Assert-StrictReleaseGate $text
+foreach ($replacement in @('missing.ps1', 'Test-ChangelogContract.ps1 -Readiness', 'Test-ChangelogContract.ps1 || true', "Test-ChangelogContract.ps1`n        if: false", "Test-ChangelogContract.ps1`n        continue-on-error: true")) {
+    $rejected = $false
+    try { Assert-StrictReleaseGate ($text.Replace('Test-ChangelogContract.ps1', $replacement)) } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Removed, draft, skipped or masked strict release gate passed.' }
+}
 $normalized = $text.Replace("`r`n", "`n")
 $sdkStep = "      - name: Set up .NET SDK`n        uses: actions/setup-dotnet@v4`n        with:`n          dotnet-version: $sdkVersion`n"
 foreach ($jobName in @('validate-release', 'publish')) {
