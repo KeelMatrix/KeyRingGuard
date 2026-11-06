@@ -29,4 +29,8 @@ if (-not $release.Contains('-p:RequirePackageIcon=true', [StringComparison]::Ord
     throw 'Package icon contract failed: release validation is not strict about the icon.'
 }
 
+if (Test-Path -LiteralPath (Join-Path $root 'icon.png') -PathType Leaf) {
+    & (Join-Path $root 'scripts' 'Test-IconContract.ps1') -SourceOnly
+}
+
 Write-Output 'Package icon contract: PASS (optional readiness packaging, strict release packaging, and conditional verification).'

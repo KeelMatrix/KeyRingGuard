@@ -11,7 +11,7 @@ $iconPath = Join-Path $root 'icon.png'
 function Assert-IconBytes([byte[]]$Bytes, [string]$Description) {
     if ($Bytes.Length -gt 200KB) { throw "Icon contract failed: $Description is larger than 200 KB." }
     if ($Bytes.Length -lt 33 -or -not [System.Linq.Enumerable]::SequenceEqual(
-            $Bytes[0..7],
+            [byte[]]$Bytes[0..7],
             [byte[]](137, 80, 78, 71, 13, 10, 26, 10))) {
         throw "Icon contract failed: $Description is not a PNG file."
     }
