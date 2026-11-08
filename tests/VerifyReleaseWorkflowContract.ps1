@@ -53,6 +53,15 @@ foreach ($jobName in @('validate-release', 'publish')) {
     $rejected = $false
     try { Assert-WorkflowSdk $late $sdkVersion } catch { $rejected = $true }
     if (-not $rejected) { throw 'Late or wrong-job SDK setup passed.' }
+    $selectionText = 'scripts/Test-SdkSelection.ps1 -RequireExact'
+    $selectionPosition = $normalized.IndexOf($selectionText, $start, [StringComparison]::Ordinal)
+    if ($selectionPosition -lt 0) { throw 'SDK mutation cannot locate job-local strict selection.' }
+    foreach ($replacement in @('scripts/Test-SdkSelection.ps1', ($selectionText + ' || true'), ($selectionText + "`n        continue-on-error: true"), ($selectionText + "`n        if: false"))) {
+        $mutant = $normalized.Remove($selectionPosition, $selectionText.Length).Insert($selectionPosition, $replacement)
+        $rejected = $false
+        try { Assert-WorkflowSdk $mutant $sdkVersion } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Non-strict, masked or skipped SDK selection passed.' }
+    }
 }
 
 function Assert-Contains([string]$Value, [string]$Pattern, [string]$Message) {

@@ -9,7 +9,7 @@ function Assert-WorkflowSdk([string]$Text, [string]$Version) {
         $setup = @(); $selection = @(); $runs = @()
         for ($index = 0; $index -lt $steps.Count; $index++) {
             if ($steps[$index] -match '(?m)^        uses: actions/setup-dotnet@v4\s*$') { $setup += $index }
-            if ($steps[$index] -match '(?m)^        run: pwsh -NoProfile -File scripts/Test-SdkSelection.ps1\s*$') { $selection += $index }
+            if ($steps[$index] -match '(?m)^        run: pwsh -NoProfile -File scripts/Test-SdkSelection.ps1 -RequireExact\s*$') { $selection += $index }
             if ($steps[$index] -match '(?m)^        run:') { $runs += $index }
         }
         if ($setup.Count -ne 1 -or $selection.Count -ne 1 -or $setup[0] -ge $selection[0] -or $selection[0] -ne $runs[0]) {

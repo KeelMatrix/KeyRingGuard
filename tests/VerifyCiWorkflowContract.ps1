@@ -8,6 +8,12 @@ if (-not (Test-Path -LiteralPath $WorkflowPath -PathType Leaf)) { throw "CI work
 $text = Get-Content -Raw -LiteralPath $WorkflowPath
 . (Join-Path $PSScriptRoot '../build/Assert-WorkflowSdk.ps1')
 Assert-WorkflowSdk $text ((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..' 'global.json') | ConvertFrom-Json).sdk.version)
+$sdkVersion = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..' 'global.json') | ConvertFrom-Json).sdk.version
+foreach ($replacement in @('scripts/Test-SdkSelection.ps1', 'scripts/Test-SdkSelection.ps1 -RequireExact || true', "scripts/Test-SdkSelection.ps1 -RequireExact`n        if: false", "scripts/Test-SdkSelection.ps1 -RequireExact`n        continue-on-error: true")) {
+    $rejected = $false
+    try { Assert-WorkflowSdk ($text.Replace('scripts/Test-SdkSelection.ps1 -RequireExact', $replacement)) $sdkVersion } catch { $rejected = $true }
+    if (-not $rejected) { throw 'CI SDK selection must remain exact, unconditional and fail closed.' }
+}
 
 $requiredFragments = @(
     'ubuntu-latest'

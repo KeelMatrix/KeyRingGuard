@@ -74,7 +74,9 @@ Isolation succeeds only when the same-boundary control passes and each cross-che
 
 ## Supported runtime and platforms
 
-The package targets `net8.0`. The repository's filesystem integration and package-consumer checks run on Windows, Linux, and macOS in the release-equivalent CI matrix. That evidence covers the shipped filesystem fixtures, not every third-party provider or deployment environment. The repository uses the .NET SDK `10.0.401`, pinned in `global.json`, to build the package.
+The package targets `net8.0`. The repository's filesystem integration and package-consumer checks run on Windows, Linux, and macOS in the release-equivalent CI matrix. That evidence covers the shipped filesystem fixtures, not every third-party provider or deployment environment.
+
+Building this repository requires the stable .NET SDK `10.0.401` or a later servicing patch in `10.0.4xx`. `global.json` prefers the exact baseline when installed and rejects other feature bands and preview SDKs. Visual Studio builds require Visual Studio 2026/MSBuild 18.0 or later; SDK `10.0.4xx` ships with Visual Studio 18.9. CI and release jobs install and require exactly `10.0.401`. See [SDK prerequisites and troubleshooting](https://github.com/KeelMatrix/KeyRingGuard/blob/main/docs/releasing.md#sdk-prerequisites). These source-build requirements do not change the package's `net8.0` consumer target.
 
 ## Safety and privacy
 

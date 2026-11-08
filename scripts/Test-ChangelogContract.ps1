@@ -4,7 +4,8 @@ Validates the finite changelog grammar and real Release package identity.
 .DESCRIPTION
 Reads raw blocks before projecting supported inline text. Unsupported syntax fails
 closed in both modes. See docs/releasing.md and tests/VerifyChangelogContract.ps1.
-Requires the exact global.json SDK; evaluates the shipping project without targets,
+Requires the exact global.json SDK for releases; readiness permits servicing patches.
+Evaluates the shipping project without targets,
 restore, or version overrides. Paths must describe the selected repository graph.
 .PARAMETER RepositoryRoot
 Root containing global.json, Directory.Build.props and Directory.Packages.props.
@@ -21,7 +22,8 @@ Within-root SDK project; defaults to src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyR
 .PARAMETER ExpectedCommit
 Optional exact fixture/repository HEAD, or EXPECTED_COMMIT when omitted.
 .PARAMETER Readiness
-Also permits the exact planned heading and draft narrative. Never use on a tag path.
+Also permits the exact planned heading, draft narrative and local SDK servicing
+patches. Never use on a tag path.
 #>
 [CmdletBinding()]
 param(
@@ -38,6 +40,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 . (Join-Path $PSScriptRoot 'Invoke-BoundedDotnet.ps1')
+. (Join-Path $PSScriptRoot '../build/SdkSelection.ps1')
 $rx = [string][char]92
 
 function Fail([string]$Message) { throw "Changelog contract failed: $Message" }
@@ -313,11 +316,10 @@ function Assert-VersionSources([string]$Project) {
 function Assert-EvaluatedIdentity([string]$Project) {
     $globalPath = Resolve-ContractPath (Join-Path $RepositoryRoot 'global.json')
     try { $sdk = [IO.File]::ReadAllText($globalPath) | ConvertFrom-Json -ErrorAction Stop } catch { Fail 'invalid global.json.' }
-    if ($sdk.sdk.version -cnotmatch '^[0-9]+[.][0-9]+[.][0-9]+$' -or $sdk.sdk.rollForward -cne 'disable' -or $sdk.sdk.allowPrerelease -ne $false) { Fail 'global.json must select one exact non-prerelease SDK.' }
     Push-Location $RepositoryRoot
     try {
         $selected = (Invoke-BoundedDotnet -Arguments @('--version') | Out-String).Trim()
-        if ($selected -cne $sdk.sdk.version) { Fail 'the pinned global.json SDK was not selected.' }
+        try { Assert-SdkSelection $sdk.sdk $selected -RequireExact:(-not $Readiness) } catch { Fail $_.Exception.Message }
         $json = Invoke-BoundedDotnet -Arguments @('msbuild', $Project, '-nologo', '-p:Configuration=Release', '-getProperty:Version,PackageVersion,PackageId,TargetFramework,ManagePackageVersionsCentrally', '-getItem:PackageVersion')
         try { $evaluation = ($json | Out-String) | ConvertFrom-Json -ErrorAction Stop } catch { Fail 'evaluation did not return valid identity JSON.' }
         $p = $evaluation.Properties

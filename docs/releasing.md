@@ -1,6 +1,14 @@
 # Release validation
 
-`global.json` owns SDK selection. Each CLI job installs that exact SDK and runs `scripts/Test-SdkSelection.ps1` before other commands. Jobs do not share an SDK installation.
+## SDK prerequisites
+
+`global.json` is the source of truth for SDK selection: stable `10.0.401`, `rollForward: patch`, `allowPrerelease: false`. Local CLI and Visual Studio builds prefer exactly `10.0.401` when installed; otherwise they select the highest installed stable servicing patch at or above that minimum within `10.0.4xx`. Earlier patches, other feature bands, major/minor versions and previews cannot substitute. Installing only a .NET 8 SDK/runtime or a .NET 11 preview does not meet the source-build prerequisite. The shipping package still targets `net8.0`.
+
+Visual Studio 2026/MSBuild 18.0 or later is required by SDK `10.0.4xx`; its paired Visual Studio version is 18.9. Visual Studio 2022/MSBuild 17.x is not supported for this source build. See Microsoft's [SDK/Visual Studio version matrix](https://learn.microsoft.com/en-us/dotnet/core/porting/versioning-sdk-msbuild-vs) and [global.json selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json). The explicit preview exclusion applies even in an Insiders IDE or with preview SDKs enabled.
+
+Each CI and release CLI job independently installs exactly `10.0.401` and runs `scripts/Test-SdkSelection.ps1 -RequireExact` before other commands. The `patch` policy prefers that installed baseline, keeping compiler, analyzers, release identity evaluation and publication on the same exact SDK. Missing provisioning or a different selected SDK fails the job. Local validation uses `scripts/Test-SdkSelection.ps1` and records the selected servicing version; it is not an exact-baseline release certification.
+
+For NETSDK1141 or an SDK-not-found error, run `dotnet --list-sdks` and `dotnet --version` from the solution directory, then check the Visual Studio version separately. Install the baseline or a permitted stable servicing patch and use a compatible IDE. Close and reopen the solution after installing prerequisites. The CLI starts its global.json search at the working directory; the IDE resolver starts at the solution/project, so a CLI success elsewhere does not prove the solution can load. A preview SDK path in the IDE error can be a fallback after the requested SDK failed to resolve. Changing preview settings is not required by this repository.
 
 [`scripts/Test-ChangelogContract.ps1`](../scripts/Test-ChangelogContract.ps1) and its [executable fixtures](../tests/VerifyChangelogContract.ps1) own the release contract. The validator classifies original physical blocks, validates heading ancestry, projects supported visible text, then checks real XML declarations and evaluated Release identity. Inline processing cannot create a block or change its parent.
 
@@ -22,7 +30,7 @@ The source graph consists of root `Directory.Build.props`, root `Directory.Packa
 
 Real XML must contain exactly one unconditional direct `Project/PropertyGroup/Version` with canonical X.Y.Z components in 0..65534, one unconditional literal `PackageVersion=$(Version)` property alias in that props file, and one unconditional direct central `Project/ItemGroup/PackageVersion` item for `KeelMatrix.KeyRingGuard`. Central items use only literal Include/Version attributes. XML comments cannot supply declarations. Conditional leaf/group declarations, duplicates (even equal or inactive), VersionPrefix/Suffix, target-produced versions, derived values and child/CDATA version content fail. Unrelated existing build/pack conditions remain supported.
 
-From `RepositoryRoot`, the exact non-prerelease SDK selected by `global.json` first passes `dotnet --version`. A bounded real query then runs with no version override:
+From `RepositoryRoot`, SDK selection first passes `dotnet --version`: strict release mode requires exactly the `global.json` baseline; `-Readiness` also accepts its permitted local servicing patches. A bounded real query then runs with no version override:
 
 ```text
 dotnet msbuild <shipping-project> -nologo -p:Configuration=Release -getProperty:Version,PackageVersion,PackageId,TargetFramework,ManagePackageVersionsCentrally -getItem:PackageVersion
@@ -34,6 +42,6 @@ Ordinary CI runs the executable finalized/draft fixtures and `-Readiness` agains
 
 `scripts/Publish-ReleaseArtifacts.ps1` accepts exactly the intended `.nupkg` and `.snupkg` files. The primary push uses `--no-symbols`; one subsequent explicit symbols push uses the V3 symbol resource. Both commands use explicit source/configuration and bounded execution. A primary failure prevents symbols. A symbols failure preserves confirmed primary submission and reports symbol acceptance as uncertain. Neither command is automatically replayed by the script; the CLI transport can retry individual requests. A lost response does not establish whether the server accepted bytes. Successful submission does not establish indexing or consumer availability.
 
-`tests/VerifyPublicationContract.ps1` executes the pinned CLI against a finite loopback-only V3 fixture, with synthetic artifacts/credentials, cleared configuration, no external resources, and no redirects. It checks actual upload counts/hashes, pending symbols, partial/unknown outcomes, invalid artifact sets, and the automatic-symbols negative control. This proves client execution, not NuGet.org validation or indexing. `-DryRun` only previews the chosen commands.
+`tests/VerifyPublicationContract.ps1` executes the validated CLI (exact baseline in CI, permitted servicing patch locally) against a finite loopback-only V3 fixture, with synthetic artifacts/credentials, cleared configuration, no external resources, and no redirects. It checks actual upload counts/hashes, pending symbols, partial/unknown outcomes, invalid artifact sets, and the automatic-symbols negative control. This proves client execution, not NuGet.org validation or indexing. `-DryRun` only previews the chosen commands.
 
 Run the affected validator fixture first. `scripts/Invoke-LocalGate.ps1` provides the full local validation path; `.github/workflows/ci.yml` runs the corresponding checks on Windows, Linux, and macOS. The shared checked-step runner and `tests/VerifyGateOrchestration.ps1` verify that a failed child prevents later operations.
