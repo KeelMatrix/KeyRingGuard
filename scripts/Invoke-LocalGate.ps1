@@ -8,6 +8,8 @@ Set-Location $root
 . (Join-Path $root 'build' 'Invoke-GateStep.ps1')
 
 Invoke-GateStep 'SDK selection' { & (Join-Path $PSScriptRoot 'Test-SdkSelection.ps1') }
+Invoke-GateStep 'Website metadata' { & (Join-Path $PSScriptRoot 'Test-WebsiteMetadata.ps1') }
+Invoke-GateStep 'Website metadata contract tests' { & (Join-Path $root 'tests' 'VerifyWebsiteMetadataContract.ps1') }
 Invoke-GateStep 'Hidden child PowerShell guard self-test' { & (Join-Path $root 'build' 'Test-NestedPwshLaunch.ps1') -SelfTest }
 Invoke-GateStep 'Hidden child PowerShell launch scan' { & (Join-Path $root 'build' 'Test-NestedPwshLaunch.ps1') }
 Invoke-GateStep 'Restore' { dotnet restore KeelMatrix.KeyRingGuard.sln }

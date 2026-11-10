@@ -8,7 +8,7 @@
     <Authors>KeelMatrix</Authors>
     <Copyright>Copyright (c) 2026 KeelMatrix</Copyright>
     <Description>Prove ASP.NET Core Data Protection key continuity, sharing, rotation, and isolation before deployment.</Description>
-    <PackageTags>aspnetcore;data-protection;key-ring;testing;security;docker;authentication;integration-testing</PackageTags>
+    <PackageTags>aspnetcore;data-protection;key-ring;testing;security;docker;authentication;integration-testing;keelmatrix-public-product;keelmatrix-primary</PackageTags>
     <RepositoryUrl>https://github.com/KeelMatrix/KeyRingGuard</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/KeelMatrix/KeyRingGuard#readme</PackageProjectUrl>

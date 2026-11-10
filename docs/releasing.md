@@ -1,5 +1,13 @@
 # Release validation
 
+## Website discovery metadata
+
+The root [`keelmatrix.website.json`](../keelmatrix.website.json) declares `KeelMatrix.KeyRingGuard` as `public-product` and `primary` in schema version 1. It contains classification only. The shipping project's `PackageTags` preserves its search tags and includes exactly one lowercase visibility sentinel, `keelmatrix-public-product`, and one role sentinel, `keelmatrix-primary`. Keep the canonical GitHub project and repository URLs pointed at `https://github.com/KeelMatrix/KeyRingGuard`; the project URL also accepts its existing `#readme` fragment.
+
+Run `pwsh ./scripts/Test-WebsiteMetadata.ps1` for evaluated Release source validation and `pwsh ./tests/VerifyWebsiteMetadataContract.ps1` for negative controls. The validator discovers repository `.csproj` files outside generated `bin`, `obj` and `artifacts` directories, evaluates inherited Release properties, checks exact manifest IDs and classification for every packable project, rejects duplicates and malformed metadata, and requires one primary per public family. With `-PackagePath <path.nupkg>`, it also checks the actual nuspec against the manifest and source, preserving every source tag. `Inspect-Package.ps1` invokes that built-artifact check. Local validation, every CI OS leg and release validation run the source check and fixtures; failures stop later steps before artifact upload or publication.
+
+Published NuGet versions are immutable. Existing versions without sentinels use the public repository manifest as the website's migration fallback. Future normal releases carry the source sentinels and must agree with the manifest. Do not republish or change a version solely for classification metadata. A valid manifest permits discovery; it does not prove a live catalog refresh or listing.
+
 ## SDK prerequisites
 
 `global.json` is the source of truth for SDK selection: stable `10.0.401`, `rollForward: patch`, `allowPrerelease: false`. Local CLI and Visual Studio builds prefer exactly `10.0.401` when installed; otherwise they select the highest installed stable servicing patch at or above that minimum within `10.0.4xx`. Earlier patches, other feature bands, major/minor versions and previews cannot substitute. Installing only a .NET 8 SDK/runtime or a .NET 11 preview does not meet the source-build prerequisite. The shipping package still targets `net8.0`.

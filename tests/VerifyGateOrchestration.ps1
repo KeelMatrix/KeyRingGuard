@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $local = [IO.File]::ReadAllText((Join-Path $root 'scripts/Invoke-LocalGate.ps1'))
 $ci = [IO.File]::ReadAllText((Join-Path $root '.github/workflows/ci.yml'))
-$required = @('VerifyIdeIgnoreContract.ps1', 'VerifyPublicationContract.ps1', 'VerifyChangelogContract.ps1', 'VerifySdkIsolation.ps1')
+$required = @('VerifyIdeIgnoreContract.ps1', 'VerifyPublicationContract.ps1', 'VerifyChangelogContract.ps1', 'VerifySdkIsolation.ps1', 'VerifyWebsiteMetadataContract.ps1')
 function Assert-Wiring([string]$LocalText, [string]$CiText) {
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseInput($LocalText, [ref]$tokens, [ref]$errors)

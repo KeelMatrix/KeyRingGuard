@@ -39,6 +39,12 @@ jobs:
       - name: Verify SDK selection
         run: pwsh -NoProfile -File scripts/Test-SdkSelection.ps1 -RequireExact
 
+      - name: Verify website metadata
+        run: pwsh -NoProfile -File scripts/Test-WebsiteMetadata.ps1
+
+      - name: Verify website metadata fixtures
+        run: pwsh -NoProfile -File tests/VerifyWebsiteMetadataContract.ps1
+
       - name: Verify hidden child PowerShell launch guard
         shell: pwsh
         run: ./build/Test-NestedPwshLaunch.ps1 -SelfTest

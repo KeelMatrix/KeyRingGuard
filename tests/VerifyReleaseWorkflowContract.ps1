@@ -75,6 +75,16 @@ Assert-Contains $text ('scripts/GetReleaseVersion' + $literalDot + 'ps1') 'the w
 Assert-Contains $text ('scripts/Test-ChangelogContract' + $literalDot + 'ps1') 'the workflow must recheck changelog/version consistency.'
 Assert-Contains $text ('scripts/Invoke-VulnerabilityAudit' + $literalDot + 'ps1') 'the workflow must run the fail-closed vulnerability audit.'
 Assert-Contains $text ('scripts/Inspect-Package' + $literalDot + 'ps1') 'the workflow must inspect the package before publication.'
+Assert-Contains $text ('scripts/Test-WebsiteMetadata' + $literalDot + 'ps1') 'the workflow must verify website metadata before publication.'
+Assert-Contains $text ('tests/VerifyWebsiteMetadataContract' + $literalDot + 'ps1') 'the workflow must exercise website metadata negative controls.'
+foreach ($script in @('scripts/Test-WebsiteMetadata.ps1', 'tests/VerifyWebsiteMetadataContract.ps1')) {
+    $step = [regex]::Match($text, '(?ms)^      - name:[^\r\n]*\r?\n(?:(?!^      - name:).)*run: pwsh -NoProfile -File ' + [regex]::Escape($script) + '(?:(?!^      - name:).)*')
+    if (-not $step.Success -or $step.Value -match '(?m)^        (?:if|continue-on-error):' -or
+        $step.Value -notmatch ('(?m)^        run: pwsh -NoProfile -File ' + [regex]::Escape($script) + '\r?$') -or
+        $step.Index -gt $text.IndexOf('      - name: Pack exact release artifacts', [StringComparison]::Ordinal)) {
+        throw "Release workflow must run $script unconditionally before packing and propagate failure."
+    }
+}
 Assert-Contains $text ('scripts/Test-ReleaseArtifactSet' + $literalDot + 'ps1') 'the workflow must validate exact artifacts in both release jobs.'
 Assert-Contains $text '-p:RequirePackageIcon=true' 'release packing must fail closed when the founder-owned icon is absent.'
 Assert-Contains $text 'Validate exact artifact set' 'the validation job must check the exact artifact set.'

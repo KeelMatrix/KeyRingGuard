@@ -30,6 +30,8 @@ $requiredFragments = @(
     'tests/VerifyGateOrchestration.ps1'
     'tests/VerifySdkIsolation.ps1'
     'tests/VerifyPublicationContract.ps1'
+    'scripts/Test-WebsiteMetadata.ps1'
+    'tests/VerifyWebsiteMetadataContract.ps1'
     '-Readiness'
     'tests/VerifyReleaseWorkflowContract.ps1'
     'tests/VerifyPackageIconContract.ps1'

@@ -12,6 +12,7 @@ if ([string]::IsNullOrWhiteSpace($PackagePath)) {
     $PackagePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'artifacts' 'packages' "KeelMatrix.KeyRingGuard.$Version.nupkg"))
 }
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
+& (Join-Path $PSScriptRoot 'Test-WebsiteMetadata.ps1') -PackagePath $package
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $iconSource = Join-Path $repositoryRoot 'icon.png'
 $projectReadmePath = Join-Path $repositoryRoot 'src' 'KeelMatrix.KeyRingGuard' 'README.md'
