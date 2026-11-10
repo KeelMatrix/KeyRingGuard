@@ -92,4 +92,4 @@ The public API follows a 0.x compatibility contract: minor releases may introduc
 
 See the [installation and scenario guide](docs/usage.md) for replica sharing, boundary-attributed isolation, linked rotation/new-key adoption, provider factories, cleanup, and safe network-backed testing. The [verification boundary](docs/what-it-proves.md) defines canonical rotation envelope support, including key IDs whose two byte orders are identical.
 
-Repository maintainers: see [website discovery metadata and validation](docs/releasing.md#website-discovery-metadata) for package classification, the single shipping-project boundary and paired package/symbol metadata checks.
+Repository maintainers: see [website discovery metadata and validation](docs/releasing.md#website-discovery-metadata) for package classification, the exact shipping-project boundary and ordinal metadata checks for both package and symbol archives.

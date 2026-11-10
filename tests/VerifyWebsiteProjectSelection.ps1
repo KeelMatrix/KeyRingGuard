@@ -29,6 +29,20 @@ try {
     $main = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><IsPackable>True</IsPackable></PropertyGroup></Project>'
     $mainPath = Write-FixtureFile 'src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj' $main
     Assert-Selection $true 'inherited metadata on the intended shipping project'
+    [IO.File]::WriteAllText($mainPath, $main.Replace('True', 'FALSE'))
+    foreach ($codePoint in @(0x200B, 0x00AD, 0x2060)) {
+        $label = 'U+{0:X4}' -f $codePoint
+        $substitute = Write-FixtureFile ("src/KeelMatrix.KeyRing$([char]$codePoint)Guard/KeelMatrix.KeyRingGuard.csproj") $main
+        Assert-Selection $false "disabled canonical project plus ordinally different directory $label"
+        $output = @(Invoke-NestedPwsh -NoProfile -File $validator -RepositoryRoot $scratch 2>&1)
+        if ($LASTEXITCODE -eq 0 -or ($output -join ' ') -notmatch 'Only the intended shipping project') { throw "Native selector accepted substitute $label." }
+        $argumentsPath = Write-FixtureFile 'arguments.json' (ConvertTo-Json -InputObject @('-RepositoryRoot', $scratch))
+        $marker = Join-Path $scratch "following-$codePoint"
+        $null = @(Invoke-NestedPwsh -NoProfile -File (Join-Path $PSScriptRoot 'Invoke-GateFailureProbe.ps1') -CommandFile $validator -ArgumentsPath $argumentsPath -MarkerPath $marker 2>&1)
+        if ($LASTEXITCODE -eq 0 -or (Test-Path -LiteralPath $marker)) { throw "Substitute $label advanced to a following operation." }
+        Remove-Item -LiteralPath $substitute
+    }
+    [IO.File]::WriteAllText($mainPath, $main)
     foreach ($extension in @('vbproj', 'fsproj', 'csproj')) {
         foreach ($location in @('.', 'src', 'tests', 'smoke', 'examples', 'tools', '.build')) {
             $helperPath = Write-FixtureFile "$location/Helper/Helper.$extension" '<Project Sdk="Microsoft.NET.Sdk" />'

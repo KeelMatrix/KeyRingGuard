@@ -16,8 +16,9 @@ Push-Location $RepositoryRoot
 try {
     # Validate the selected SDK before evaluating inherited Release properties.
     $null = & (Join-Path $PSScriptRoot 'Test-SdkSelection.ps1')
+    $projectExtensions = [Collections.Generic.HashSet[string]]::new([string[]]@('.csproj', '.vbproj', '.fsproj'), [StringComparer]::OrdinalIgnoreCase)
     $projects = Get-ChildItem -LiteralPath $RepositoryRoot -Recurse -File -Force | Where-Object {
-        $_.Extension -iin @('.csproj', '.vbproj', '.fsproj') -and
+        $projectExtensions.Contains($_.Extension) -and
         [IO.Path]::GetRelativePath($RepositoryRoot, $_.FullName).Replace([char]92, '/') -notmatch '(^|/)(bin|obj|artifacts|[.]git)(/|$)'
     }
     $packages = @(foreach ($project in $projects) {
@@ -25,9 +26,9 @@ try {
             'msbuild', $project.FullName, '-nologo', '-p:Configuration=Release',
             '-getProperty:IsPackable,PackageId,PackageTags,PackageProjectUrl,RepositoryUrl,RepositoryType')
         $properties = ($result -join "`n" | ConvertFrom-Json).Properties
-        if ($properties.IsPackable -ieq 'true') {
+        if ([string]::Equals($properties.IsPackable, 'true', [StringComparison]::OrdinalIgnoreCase)) {
             $relative = [IO.Path]::GetRelativePath($RepositoryRoot, $project.FullName).Replace([char]92, '/')
-            if ($relative -cne 'src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj') {
+            if (-not (Test-WebsiteToken $relative 'src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj')) {
                 throw "Only the intended shipping project may be packable: $relative."
             }
             $properties

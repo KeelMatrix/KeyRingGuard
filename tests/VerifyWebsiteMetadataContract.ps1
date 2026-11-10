@@ -102,6 +102,45 @@ Assert-Rejected { Assert-WebsiteMetadata $manifest @($source) $packed } 'lost ma
 $packed.PackageTags = $source.PackageTags.Replace(';', ' ')
 Assert-WebsiteMetadata $manifest @($source) $packed
 
+# Machine identity must distinguish strings that linguistic comparison can equate.
+foreach ($codePoint in @(0x200B, 0x00AD, 0x2060)) {
+    $character = [string][char]$codePoint
+    $label = 'U+{0:X4}' -f $codePoint
+    foreach ($pair in @(@('visibility', 'public-product'), @('role', 'primary'))) {
+        $value = $pair[1].Insert(2, $character)
+        Assert-Rejected { Assert-WebsiteMetadata ($manifest.Replace($pair[1], $value)) @($source) } "manifest $($pair[0]) $label"
+    }
+    foreach ($propertyName in @('schemaVersion', 'packages', 'visibility', 'role')) {
+        Assert-Rejected { Assert-WebsiteMetadata ($manifest.Replace($propertyName, $propertyName.Insert(2, $character))) @($source) } "manifest property $propertyName $label"
+    }
+    foreach ($property in @('PackageId', 'PackageProjectUrl', 'RepositoryUrl', 'RepositoryType')) {
+        $changed = $source.PSObject.Copy()
+        $changed.$property = $changed.$property.Insert(2, $character)
+        Assert-Rejected { Assert-WebsiteMetadata $manifest @($changed) } "source $property $label"
+        Assert-Rejected { Assert-WebsiteMetadata $manifest @($source) $changed } "packed $property $label"
+    }
+    Assert-Rejected { Assert-WebsiteMetadata ($manifest.Replace('KeyRingGuard', "KeyRing${character}Guard")) @($source) } "manifest ID $label"
+    foreach ($sentinel in @('keelmatrix-public-product', 'keelmatrix-primary')) {
+        $changed = $source.PSObject.Copy()
+        $changed.PackageTags = $changed.PackageTags.Replace($sentinel, ($sentinel + $character))
+        Assert-Rejected { Assert-WebsiteMetadata $manifest @($changed) } "source sentinel $label"
+        Assert-Rejected { Assert-WebsiteMetadata $manifest @($source) $changed } "packed sentinel $label"
+    }
+    $changed = $source.PSObject.Copy()
+    $changed.PackageTags = $changed.PackageTags.Replace('aspnetcore', "aspnet${character}core")
+    Assert-Rejected { Assert-WebsiteMetadata $manifest @($source) $changed } "packed marketing tag $label"
+    # Exact non-ASCII values are legal marketing tags; their order and separators are not identity.
+    $same = $source.PSObject.Copy()
+    $same.PackageTags += ";aspnet${character}core;aspnetcore"
+    $reordered = $same.PSObject.Copy()
+    $tags = [string[]]@(Get-WebsiteTags $same.PackageTags)
+    [array]::Reverse($tags)
+    $reordered.PackageTags = $tags -join ", `t"
+    Assert-WebsiteMetadata $manifest @($same) $reordered
+    $reordered.PackageTags = $reordered.PackageTags.Replace("aspnet${character}core", 'aspnetcore')
+    Assert-Rejected { Assert-WebsiteMetadata $manifest @($same) $reordered } "ordinal tag multiset $label"
+}
+
 # Exercise real inherited MSBuild properties, archive parsing and child failure propagation.
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $scratch = Join-Path $tempRoot ('keyringguard-website-' + [guid]::NewGuid().ToString('N'))
@@ -116,6 +155,14 @@ try {
     [IO.File]::WriteAllText((Join-Path $scratch 'src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>')
     $validator = Join-Path $root 'scripts/Test-WebsiteMetadata.ps1'
     & $validator -RepositoryRoot $scratch
+    foreach ($codePoint in @(0x200B, 0x00AD, 0x2060)) {
+        foreach ($property in @('PackageId', 'PackageProjectUrl', 'RepositoryUrl', 'RepositoryType')) {
+            $changed = $source.$property.Insert(2, [string][char]$codePoint)
+            [IO.File]::WriteAllText($propsPath, $props.Replace("<$property>$($source.$property)</$property>", "<$property>$changed</$property>"))
+            Assert-Rejected { & $validator -RepositoryRoot $scratch } "evaluated source $property U+$('{0:X4}' -f $codePoint)"
+        }
+    }
+    [IO.File]::WriteAllText($propsPath, $props)
     New-Item -ItemType Directory -Path (Join-Path $scratch 'tests/Consumer') | Out-Null
     $consumerPath = Join-Path $scratch 'tests/Consumer/Consumer.csproj'
     $consumer = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework><IsPackable>false</IsPackable><PackageId>KeelMatrix.KeyRingGuard.Consumer</PackageId></PropertyGroup></Project>'
