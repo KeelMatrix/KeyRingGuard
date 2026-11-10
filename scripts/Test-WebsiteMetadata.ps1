@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')),
-    [string]$PackagePath = ''
+    [string]$PackagePath = '',
+    [string]$SymbolPackagePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +16,8 @@ Push-Location $RepositoryRoot
 try {
     # Validate the selected SDK before evaluating inherited Release properties.
     $null = & (Join-Path $PSScriptRoot 'Test-SdkSelection.ps1')
-    $projects = Get-ChildItem -LiteralPath $RepositoryRoot -Recurse -Filter '*.csproj' | Where-Object {
+    $projects = Get-ChildItem -LiteralPath $RepositoryRoot -Recurse -File -Force | Where-Object {
+        $_.Extension -iin @('.csproj', '.vbproj', '.fsproj') -and
         [IO.Path]::GetRelativePath($RepositoryRoot, $_.FullName).Replace([char]92, '/') -notmatch '(^|/)(bin|obj|artifacts|[.]git)(/|$)'
     }
     $packages = @(foreach ($project in $projects) {
@@ -23,41 +25,19 @@ try {
             'msbuild', $project.FullName, '-nologo', '-p:Configuration=Release',
             '-getProperty:IsPackable,PackageId,PackageTags,PackageProjectUrl,RepositoryUrl,RepositoryType')
         $properties = ($result -join "`n" | ConvertFrom-Json).Properties
-        if ($properties.IsPackable -ieq 'true') { $properties }
+        if ($properties.IsPackable -ieq 'true') {
+            $relative = [IO.Path]::GetRelativePath($RepositoryRoot, $project.FullName).Replace([char]92, '/')
+            if ($relative -cne 'src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj') {
+                throw "Only the intended shipping project may be packable: $relative."
+            }
+            $properties
+        }
     })
 }
 finally { Pop-Location }
 
-$packed = $null
-if ($PackagePath) {
-    $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $PackagePath).Path)
-    try {
-        $specs = @($archive.Entries | Where-Object { $_.FullName -cmatch '^[^/]+[.]nuspec$' })
-        if ($specs.Count -ne 1) { throw 'Built package must contain exactly one root nuspec.' }
-        $settings = [Xml.XmlReaderSettings]::new()
-        $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
-        $stream = $specs[0].Open()
-        $reader = [Xml.XmlReader]::Create($stream, $settings)
-        try {
-            $xml = [Xml.XmlDocument]::new()
-            $xml.Load($reader)
-        }
-        finally { $reader.Dispose(); $stream.Dispose() }
-        $metadata = $xml.SelectSingleNode('/*[local-name()="package"]/*[local-name()="metadata"]')
-        $packed = [pscustomobject]@{}
-        foreach ($pair in @(
-            @('PackageId', 'id'), @('PackageTags', 'tags'), @('PackageProjectUrl', 'projectUrl')
-        )) {
-            $nodes = @($metadata.SelectNodes("*[local-name()='$($pair[1])']"))
-            if ($nodes.Count -ne 1) { throw "Built package requires exactly one $($pair[1]) metadata element." }
-            $packed | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $nodes[0].InnerText
-        }
-        $repositories = @($metadata.SelectNodes('*[local-name()="repository"]'))
-        if ($repositories.Count -ne 1) { throw 'Built package requires exactly one repository element.' }
-        $packed | Add-Member -NotePropertyName RepositoryUrl -NotePropertyValue $repositories[0].GetAttribute('url')
-        $packed | Add-Member -NotePropertyName RepositoryType -NotePropertyValue $repositories[0].GetAttribute('type')
-    }
-    finally { $archive.Dispose() }
+Assert-WebsiteMetadata $manifest $packages
+foreach ($path in @($PackagePath, $SymbolPackagePath)) {
+    if ($path) { Assert-WebsiteMetadata $manifest $packages (Read-WebsitePackageMetadata $path) }
 }
-Assert-WebsiteMetadata $manifest $packages $packed
-Write-Output 'Website metadata: PASS (manifest, evaluated Release source and supplied package agree).'
+Write-Output 'Website metadata: PASS (manifest, single shipping project, evaluated Release source and supplied archives agree).'

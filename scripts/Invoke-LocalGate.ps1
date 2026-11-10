@@ -32,6 +32,7 @@ Invoke-GateStep 'History hygiene contract tests' { & (Join-Path $root 'tests' 'V
 Invoke-GateStep 'History and workspace hygiene' { & (Join-Path $PSScriptRoot 'Test-HistoryHygiene.ps1') }
 Invoke-GateStep 'Pack without requiring the founder-owned icon' { dotnet pack src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj --configuration Release --no-build --include-symbols --p:SymbolPackageFormat=snupkg -p:RequirePackageIcon=false --output ./artifacts/packages }
 Invoke-GateStep 'Package content inspection' { & (Join-Path $PSScriptRoot 'Inspect-Package.ps1') -AllowMissingIcon }
+Invoke-GateStep 'Paired archive metadata contract tests' { & (Join-Path $root 'tests' 'VerifyWebsiteArchiveContract.ps1') }
 Invoke-GateStep 'SourceLink contract tests' { & (Join-Path $root 'tests' 'VerifySourceLinkContract.ps1') }
 Invoke-GateStep 'Package consumer smoke' { & (Join-Path $PSScriptRoot 'Invoke-PackageConsumerSmoke.ps1') }
 

@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $local = [IO.File]::ReadAllText((Join-Path $root 'scripts/Invoke-LocalGate.ps1'))
 $ci = [IO.File]::ReadAllText((Join-Path $root '.github/workflows/ci.yml'))
+$release = [IO.File]::ReadAllText((Join-Path $root '.github/workflows/release.yml'))
 $required = @('VerifyIdeIgnoreContract.ps1', 'VerifyPublicationContract.ps1', 'VerifyChangelogContract.ps1', 'VerifySdkIsolation.ps1', 'VerifyWebsiteMetadataContract.ps1')
 function Assert-Wiring([string]$LocalText, [string]$CiText) {
     $tokens = $null; $errors = $null
@@ -23,6 +24,57 @@ function Assert-Wiring([string]$LocalText, [string]$CiText) {
         if ($matches.Count -ne 1) { throw "Local gate must run $name once as a direct checked step." }
         $step = [regex]::Match($CiText, '(?ms)^      - name:[^\r\n]*\r?\n(?:(?!^      - name:).)*run: pwsh -NoProfile -File tests/' + [regex]::Escape($name) + '(?:(?!^      - name:).)*')
         if (-not $step.Success -or $step.Value -match '(?m)^        (?:if|continue-on-error):' -or $step.Value -notmatch ('(?m)^        run: pwsh -NoProfile -File tests/' + [regex]::Escape($name) + '\r?$')) { throw "CI must run $name unconditionally and propagate failure." }
+    }
+    foreach ($line in @(
+        "Invoke-GateStep 'Website metadata' { & (Join-Path `$PSScriptRoot 'Test-WebsiteMetadata.ps1') }",
+        "Invoke-GateStep 'Package content inspection' { & (Join-Path `$PSScriptRoot 'Inspect-Package.ps1') -AllowMissingIcon }",
+        "Invoke-GateStep 'Paired archive metadata contract tests' { & (Join-Path `$root 'tests' 'VerifyWebsiteArchiveContract.ps1') }"
+    )) {
+        if (@($steps | Where-Object { $_.Extent.Text -ceq $line }).Count -ne 1) { throw 'Source and paired archive checks must be direct checked local steps.' }
+    }
+    if ($LocalText.IndexOf("'Website metadata'") -gt $LocalText.IndexOf("'Restore'") -or
+        $LocalText.IndexOf("'Package content inspection'") -gt $LocalText.IndexOf("'Paired archive metadata contract tests'") -or
+        $LocalText.IndexOf("'Paired archive metadata contract tests'") -gt $LocalText.IndexOf("'Package consumer smoke'")) { throw 'Local website checks must precede following operations.' }
+}
+function Assert-WebsiteWorkflowStages([string]$Workflow, [string]$Boundary) {
+    $steps = @([regex]::Matches($Workflow, '(?ms)^      - name:.*?(?=^      - name:|^  [a-z]|\z)') | ForEach-Object Value)
+    $lastIndex = -1
+    foreach ($command in @('scripts/Test-WebsiteMetadata.ps1', 'scripts/Inspect-Package.ps1', 'tests/VerifyWebsiteArchiveContract.ps1')) {
+        $selected = @($steps | Where-Object { $_ -match ('(?m)^        run: pwsh -NoProfile -File ' + [regex]::Escape($command) + '(?: |\r?$)') })
+        if ($selected.Count -ne 1 -or $selected[0] -match '(?m)^        (?:if|continue-on-error):' -or
+            $selected[0] -notmatch ('(?m)^        run: pwsh -NoProfile -File ' + [regex]::Escape($command) + '(?: -Version 0[.]1[.]0 -PackagePath [.]?/?artifacts/packages/KeelMatrix[.]KeyRingGuard[.]0[.]1[.]0[.]nupkg -AllowMissingIcon)?\r?$')) { throw "Required workflow check is missing, skipped or masked: $command." }
+        $index = $Workflow.IndexOf($selected[0], [StringComparison]::Ordinal)
+        if ($index -le $lastIndex -or $index -gt $Workflow.IndexOf($Boundary, [StringComparison]::Ordinal)) { throw 'Workflow website checks are out of order.' }
+        if ($command -eq 'scripts/Test-WebsiteMetadata.ps1' -and $index -gt $Workflow.IndexOf('run: dotnet restore', [StringComparison]::Ordinal)) { throw 'Source metadata check must precede restore.' }
+        if ($command -eq 'scripts/Inspect-Package.ps1' -and $index -lt $Workflow.IndexOf('run: dotnet pack', [StringComparison]::Ordinal)) { throw 'Archive inspection must follow packing.' }
+        $lastIndex = $index
+    }
+}
+foreach ($line in @(
+    "Invoke-GateStep 'Website metadata' { & (Join-Path `$PSScriptRoot 'Test-WebsiteMetadata.ps1') }",
+    "Invoke-GateStep 'Package content inspection' { & (Join-Path `$PSScriptRoot 'Inspect-Package.ps1') -AllowMissingIcon }",
+    "Invoke-GateStep 'Paired archive metadata contract tests' { & (Join-Path `$root 'tests' 'VerifyWebsiteArchiveContract.ps1') }"
+)) {
+    foreach ($replacement in @('', "# $line", ($line.Replace(' }', '; $global:LASTEXITCODE = 0 }')))) {
+        $rejected = $false; try { Assert-Wiring ($local.Replace($line, $replacement)) $ci } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Removed, skipped or masked local website gate passed.' }
+    }
+    $rejected = $false; try { Assert-Wiring ($local.Replace($line, '') + "`n" + $line) $ci } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Late local website gate passed.' }
+}
+foreach ($case in @(@{ Text = $ci; Boundary = '      - name: Package consumer smoke' }, @{ Text = $release; Boundary = '      - name: Upload validated release artifacts' })) {
+    Assert-WebsiteWorkflowStages $case.Text $case.Boundary
+    foreach ($command in @('scripts/Test-WebsiteMetadata.ps1', 'scripts/Inspect-Package.ps1', 'tests/VerifyWebsiteArchiveContract.ps1')) {
+        foreach ($suffix in @(' || true', "`n        if: false", "`n        continue-on-error: true")) {
+            $rejected = $false
+            try { Assert-WebsiteWorkflowStages ($case.Text.Replace($command, $command + $suffix)) $case.Boundary } catch { $rejected = $true }
+            if (-not $rejected) { throw 'Skipped or masked workflow website gate passed.' }
+        }
+        $rejected = $false; try { Assert-WebsiteWorkflowStages ($case.Text.Replace($command, 'missing.ps1')) $case.Boundary } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Removed workflow website gate passed.' }
+        $step = @([regex]::Matches($case.Text, '(?ms)^      - name:.*?(?=^      - name:|^  [a-z]|\z)') | ForEach-Object Value | Where-Object { $_.Contains('run: pwsh -NoProfile -File ' + $command, [StringComparison]::Ordinal) })[0]
+        $rejected = $false; try { Assert-WebsiteWorkflowStages ($case.Text.Replace($step, '') + "`n" + $step) $case.Boundary } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Late workflow website gate passed.' }
     }
 }
 foreach ($mutant in @(

@@ -1,3 +1,43 @@
+function Read-WebsitePackageMetadata([string]$Path) {
+    $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $Path).Path)
+    try {
+        $specs = @($archive.Entries | Where-Object { $_.FullName -imatch '^[^/]+[.]nuspec$' })
+        if ($specs.Count -ne 1) { throw 'Built package must contain exactly one root nuspec.' }
+        $settings = [Xml.XmlReaderSettings]::new()
+        $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+        $settings.XmlResolver = $null
+        $stream = $specs[0].Open()
+        $reader = [Xml.XmlReader]::Create($stream, $settings)
+        try {
+            $xml = [Xml.XmlDocument]::new()
+            try { $xml.Load($reader) } catch { throw 'Built package nuspec must be well-formed XML without a DTD.' }
+        }
+        finally { $reader.Dispose(); $stream.Dispose() }
+        if ($xml.DocumentElement.LocalName -cne 'package') { throw 'Built package requires a package root.' }
+        $metadataNodes = @($xml.DocumentElement.SelectNodes('*[local-name()="metadata"]'))
+        if ($metadataNodes.Count -ne 1) { throw 'Built package requires exactly one metadata element.' }
+        $metadata = $metadataNodes[0]
+        $packed = [pscustomobject]@{}
+        foreach ($pair in @(
+            @('PackageId', 'id'), @('PackageTags', 'tags'), @('PackageProjectUrl', 'projectUrl')
+        )) {
+            $nodes = @($metadata.SelectNodes("*[local-name()='$($pair[1])']"))
+            if ($nodes.Count -ne 1 -or $nodes[0].SelectNodes('*').Count -ne 0) {
+                throw "Built package requires exactly one text-only $($pair[1]) metadata element."
+            }
+            $packed | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $nodes[0].InnerText
+        }
+        $repositories = @($metadata.SelectNodes('*[local-name()="repository"]'))
+        if ($repositories.Count -ne 1 -or $repositories[0].SelectNodes('*').Count -ne 0) {
+            throw 'Built package requires exactly one repository element without child elements.'
+        }
+        $packed | Add-Member -NotePropertyName RepositoryUrl -NotePropertyValue $repositories[0].GetAttribute('url')
+        $packed | Add-Member -NotePropertyName RepositoryType -NotePropertyValue $repositories[0].GetAttribute('type')
+        return $packed
+    }
+    finally { $archive.Dispose() }
+}
+
 function Assert-WebsiteObject($Element, [string[]]$Names) {
     if ($Element.ValueKind -ne [Text.Json.JsonValueKind]::Object) { throw 'Website metadata must be an object.' }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)

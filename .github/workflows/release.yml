@@ -76,6 +76,11 @@ jobs:
           RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
         run: pwsh -NoProfile -File scripts/Test-ReleaseArtifactSet.ps1
 
+      - name: Verify paired archive metadata fixtures
+        env:
+          RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
+        run: pwsh -NoProfile -File tests/VerifyWebsiteArchiveContract.ps1
+
       - name: Upload validated release artifacts
         uses: actions/upload-artifact@v4
         with:

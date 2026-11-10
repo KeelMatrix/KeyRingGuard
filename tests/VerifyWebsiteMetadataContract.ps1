@@ -105,7 +105,7 @@ Assert-WebsiteMetadata $manifest @($source) $packed
 # Exercise real inherited MSBuild properties, archive parsing and child failure propagation.
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $scratch = Join-Path $tempRoot ('keyringguard-website-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path (Join-Path $scratch 'src/Product') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $scratch 'src/KeelMatrix.KeyRingGuard') -Force | Out-Null
 try {
     [IO.File]::WriteAllText((Join-Path $scratch 'global.json'), [IO.File]::ReadAllText((Join-Path $root 'global.json')))
     $manifestPath = Join-Path $scratch 'keelmatrix.website.json'
@@ -113,7 +113,7 @@ try {
     $props = '<Project><PropertyGroup><IsPackable>true</IsPackable><PackageId>KeelMatrix.KeyRingGuard</PackageId><PackageTags>' + $source.PackageTags + '</PackageTags><PackageProjectUrl>' + $source.PackageProjectUrl + '</PackageProjectUrl><RepositoryUrl>' + $source.RepositoryUrl + '</RepositoryUrl><RepositoryType>git</RepositoryType></PropertyGroup></Project>'
     $propsPath = Join-Path $scratch 'Directory.Build.props'
     [IO.File]::WriteAllText($propsPath, $props)
-    [IO.File]::WriteAllText((Join-Path $scratch 'src/Product/Product.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>')
+    [IO.File]::WriteAllText((Join-Path $scratch 'src/KeelMatrix.KeyRingGuard/KeelMatrix.KeyRingGuard.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>')
     $validator = Join-Path $root 'scripts/Test-WebsiteMetadata.ps1'
     & $validator -RepositoryRoot $scratch
     New-Item -ItemType Directory -Path (Join-Path $scratch 'tests/Consumer') | Out-Null
@@ -125,9 +125,9 @@ try {
     Assert-Rejected { & $validator -RepositoryRoot $scratch } 'unclassified packable project outside src'
     [IO.File]::WriteAllText($consumerPath, $consumer)
     $packagePath = Join-Path $scratch 'fixture.nupkg'
-    function Write-Package([string]$Tags, [string]$Extra = '') {
-        if (Test-Path -LiteralPath $packagePath) { Remove-Item -LiteralPath $packagePath }
-        $zip = [IO.Compression.ZipFile]::Open($packagePath, [IO.Compression.ZipArchiveMode]::Create)
+    function Write-Package([string]$Tags, [string]$Extra = '', [string]$TargetPath = $packagePath) {
+        if (Test-Path -LiteralPath $TargetPath) { Remove-Item -LiteralPath $TargetPath }
+        $zip = [IO.Compression.ZipFile]::Open($TargetPath, [IO.Compression.ZipArchiveMode]::Create)
         try {
             $entry = $zip.CreateEntry('KeelMatrix.KeyRingGuard.nuspec')
             $writer = [IO.StreamWriter]::new($entry.Open())
@@ -138,6 +138,7 @@ try {
     }
     Write-Package $source.PackageTags.Replace(';', ' ')
     & $validator -RepositoryRoot $scratch -PackagePath $packagePath
+    Write-Package $source.PackageTags '' ([IO.Path]::ChangeExtension($packagePath, '.snupkg'))
     Write-Package 'aspnetcore testing'
     Assert-Rejected { & $validator -RepositoryRoot $scratch -PackagePath $packagePath } 'archive missing sentinels'
     $inspectionRejected = $false
@@ -168,4 +169,5 @@ finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force
 }
 Write-Output "Website metadata contract: PASS ($count negative controls; inherited source, archive and child failure boundaries)."
+& (Join-Path $PSScriptRoot 'VerifyWebsiteProjectSelection.ps1')
 exit 0

@@ -12,7 +12,9 @@ if ([string]::IsNullOrWhiteSpace($PackagePath)) {
     $PackagePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'artifacts' 'packages' "KeelMatrix.KeyRingGuard.$Version.nupkg"))
 }
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
-& (Join-Path $PSScriptRoot 'Test-WebsiteMetadata.ps1') -PackagePath $package
+$symbolPackage = [System.IO.Path]::ChangeExtension($package, '.snupkg')
+if (-not (Test-Path -LiteralPath $symbolPackage)) { throw "Symbol package is missing: $symbolPackage" }
+& (Join-Path $PSScriptRoot 'Test-WebsiteMetadata.ps1') -PackagePath $package -SymbolPackagePath $symbolPackage
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $iconSource = Join-Path $repositoryRoot 'icon.png'
 $projectReadmePath = Join-Path $repositoryRoot 'src' 'KeelMatrix.KeyRingGuard' 'README.md'
@@ -114,8 +116,6 @@ try {
 }
 
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..' 'src' 'KeelMatrix.KeyRingGuard' 'KeelMatrix.KeyRingGuard.csproj'))
-$symbolPackage = [System.IO.Path]::ChangeExtension($package, '.snupkg')
-if (-not (Test-Path -LiteralPath $symbolPackage)) { throw "Symbol package is missing: $symbolPackage" }
 $symbolArchive = [System.IO.Compression.ZipFile]::OpenRead($symbolPackage)
 try {
     $symbolEntries = @($symbolArchive.Entries | ForEach-Object FullName | Sort-Object)

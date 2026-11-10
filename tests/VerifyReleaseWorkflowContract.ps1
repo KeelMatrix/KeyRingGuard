@@ -77,6 +77,7 @@ Assert-Contains $text ('scripts/Invoke-VulnerabilityAudit' + $literalDot + 'ps1'
 Assert-Contains $text ('scripts/Inspect-Package' + $literalDot + 'ps1') 'the workflow must inspect the package before publication.'
 Assert-Contains $text ('scripts/Test-WebsiteMetadata' + $literalDot + 'ps1') 'the workflow must verify website metadata before publication.'
 Assert-Contains $text ('tests/VerifyWebsiteMetadataContract' + $literalDot + 'ps1') 'the workflow must exercise website metadata negative controls.'
+Assert-Contains $text ('tests/VerifyWebsiteArchiveContract' + $literalDot + 'ps1') 'the workflow must exercise paired archive drift controls before upload.'
 foreach ($script in @('scripts/Test-WebsiteMetadata.ps1', 'tests/VerifyWebsiteMetadataContract.ps1')) {
     $step = [regex]::Match($text, '(?ms)^      - name:[^\r\n]*\r?\n(?:(?!^      - name:).)*run: pwsh -NoProfile -File ' + [regex]::Escape($script) + '(?:(?!^      - name:).)*')
     if (-not $step.Success -or $step.Value -match '(?m)^        (?:if|continue-on-error):' -or

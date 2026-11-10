@@ -139,6 +139,9 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/Inspect-Package.ps1 -Version 0.1.0 -PackagePath ./artifacts/packages/KeelMatrix.KeyRingGuard.0.1.0.nupkg -AllowMissingIcon
 
+      - name: Verify paired archive metadata fixtures
+        run: pwsh -NoProfile -File tests/VerifyWebsiteArchiveContract.ps1
+
       - name: Package consumer smoke
         shell: pwsh
         run: pwsh -NoProfile -File scripts/Invoke-PackageConsumerSmoke.ps1
